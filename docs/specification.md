@@ -22,7 +22,11 @@ retro substitute. The eight mascots should be cursed and off-model in an
 approachable classic-console way: no gross-out, slime, or grotesque monsters.
 
 Friends race entirely in a browser, with responsive online play and
-controller-operated essential flows. Publish at **kartsick.brando.page**, subject
+controller-operated essential flows. Intended use is noncommercial play with
+friends, shared through links and invitations, without monetization. This does
+not change the originality or asset-permission requirements.
+
+Publish at **kartsick.brando.page**, subject
 to DNS access. Public development deployment is authorized without a separate
 release ceremony. The product name is Kartsick; Kartastrophe is excluded.
 
