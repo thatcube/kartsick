@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { NETWORK_VERSION } from "@kartsick/protocol";
 import { test, expect } from "./fixture";
 import { withSecondBrowser } from "./second-browser";
 import type { KartsickNetwork, NetworkEvent } from "../../apps/web/src/network";
@@ -6,6 +7,7 @@ import type { KartsickNetwork, NetworkEvent } from "../../apps/web/src/network";
 interface TestState { tick: number; value: number; padding?: string }
 interface TestEvent { kind: "test-event"; value: number }
 interface Probe {
+  version: number;
   net: KartsickNetwork<TestState, TestEvent>;
   events: NetworkEvent<TestState, TestEvent>[];
   restored: TestState | null;
@@ -15,8 +17,8 @@ interface Probe {
 declare global { interface Window { __networkTest: Probe } }
 
 async function open(page: Page, code: string | null = null, failRestore = false, fastFailure = false, localHumans = 1): Promise<string> {
-  await page.goto("http://127.0.0.1:4174/__network-test");
-  return page.evaluate(async ({ code, failRestore, fastFailure, localHumans }) => {
+  await page.goto(new URL("/__network-test", test.info().project.use.baseURL).href);
+  return page.evaluate(async ({ code, failRestore, fastFailure, localHumans, version }) => {
     const moduleUrl = "/src/network/index.ts";
     const module: typeof import("../../apps/web/src/network") = await import(moduleUrl);
     const decodeState = (value: unknown): TestState => {
@@ -45,7 +47,7 @@ async function open(page: Page, code: string | null = null, failRestore = false,
       maxAttempts: fastFailure ? 2 : 3,
     };
     const net = code ? await module.KartsickNetwork.join(code, options) : await module.KartsickNetwork.create(options);
-    const probe: Probe = { net, events: [], restored: null, restoredAcks: [], raw(packet, channel) {
+    const probe: Probe = { version, net, events: [], restored: null, restoredAcks: [], raw(packet, channel) {
       const peers: unknown = Reflect.get(net, "peers");
       if (!(peers instanceof Map)) throw new Error("No peers.");
       const peer: unknown = peers.values().next().value;
@@ -57,7 +59,7 @@ async function open(page: Page, code: string | null = null, failRestore = false,
     window.__networkTest = probe;
     net.subscribe(event => { probe.events.push(event); if (probe.events.length > 500) probe.events.shift(); });
     return net.connection.code;
-  }, { code, failRestore, fastFailure, localHumans });
+  }, { code, failRestore, fastFailure, localHumans, version: NETWORK_VERSION });
 }
 async function race(host: Page, client: Page): Promise<void> {
   await host.evaluate(async () => {
@@ -104,15 +106,15 @@ test("two actual browsers negotiate WebRTC, exchange owned input/snapshot/reliab
     await client.evaluate(() => {
       const p = window.__networkTest, room = p.net.room!;
       const playerId = room.participants.find(member => member.id === room.hostId)!.players[0].id;
-      p.raw({ version: 2, type: "inputs", epoch: room.epoch, snapshotAck: null,
+      p.raw({ version: p.version, type: "inputs", epoch: room.epoch, snapshotAck: null,
         frames: [{ playerId, sequence: 3, tick: 2, input: { throttle: 1, brake: 0, steer: 0, pitch: 0,
           drift: false, swap: false, recover: false, useItem: false, throwDirection: 1, slide: 0, passItem: false } }] }, "movement");
     });
     await host.waitForFunction(() => window.__networkTest.events.some(e => e.type === "error" && e.error.code === "input-owner"));
     await host.evaluate(() => {
       const p = window.__networkTest, epoch = p.net.room!.epoch;
-      p.raw({ version: 2, type: "snapshot", epoch: epoch - 1, sequence: 999, tick: 99, acks: [], state: { tick: 99, value: 999 } }, "movement");
-      p.raw({ version: 2, type: "snapshot", epoch, sequence: 999, tick: 99, acks: [], state: { unvalidated: true } }, "movement");
+      p.raw({ version: p.version, type: "snapshot", epoch: epoch - 1, sequence: 999, tick: 99, acks: [], state: { tick: 99, value: 999 } }, "movement");
+      p.raw({ version: p.version, type: "snapshot", epoch, sequence: 999, tick: 99, acks: [], state: { unvalidated: true } }, "movement");
     });
     await client.waitForFunction(() => window.__networkTest.events.some(e => e.type === "error" && e.error.code === "invalid-peer-message"));
     expect(await client.evaluate(() => window.__networkTest.events.filter(e => e.type === "snapshot").length)).toBe(1);
@@ -133,7 +135,7 @@ test("two actual browsers negotiate WebRTC, exchange owned input/snapshot/reliab
     await client.evaluate(() => {
       const p = window.__networkTest, room = p.net.room!;
       const playerId = room.participants.find(member => member.id === p.net.participantId)!.players[0].id;
-      p.raw({ version: 2, type: "inputs", epoch: room.epoch, snapshotAck: null,
+      p.raw({ version: p.version, type: "inputs", epoch: room.epoch, snapshotAck: null,
         frames: [{ playerId, sequence: 1000, tick: 5, input: { throttle: 0, brake: 0, steer: 0, pitch: 0,
           drift: false, swap: false, recover: false, useItem: false, throwDirection: 1, slide: 0, passItem: false } }] }, "movement");
     });
@@ -250,7 +252,9 @@ test("failed application checkpoint restore returns the actual browsers to their
     await host.evaluate(() => window.__networkTest.net.commitCheckpoint({ tick: 20, value: 11 }, 20, []));
     await client.waitForFunction(() => window.__networkTest.net.room?.checkpoint?.tick === 20);
     await host.evaluate(() => window.__networkTest.net.dispose());
-    await client.waitForFunction(() => window.__networkTest.net.room?.phase === "lobby" && window.__networkTest.net.room.reason?.includes("No race results"));
+    await client.waitForFunction(() => window.__networkTest.net.room?.phase === "lobby");
+    expect(await client.evaluate(() => window.__networkTest.net.room!.reason)).toContain("could not restore the committed checkpoint");
+    expect(await client.evaluate(() => window.__networkTest.net.room!.lastRound)).toBeNull();
     expect(await client.evaluate(() => window.__networkTest.net.room!.code)).toBe(code);
     expect(await client.evaluate(() => window.__networkTest.events.some(e => e.type === "event"))).toBe(false);
   });

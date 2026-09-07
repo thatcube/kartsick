@@ -3,7 +3,7 @@ import {
   combinedStats, getCourse, nearbyFlight, normalizeBuild, roadFeatures, validBuild, wrap,
 } from "@kartsick/content";
 import type { CharacterId, CourseId, CourseQuery, ItemId, KartBuild } from "@kartsick/content";
-import { STEP, advanceKartProgress, copyKart, createKart, stepKart, tuningForBuild } from "./physics";
+import { GLIDE_DYNAMICS, STEP, advanceKartProgress, copyKart, createKart, stepKart, tuningForBuild } from "./physics";
 import type { DriverInput, DrivingEvent, KartState } from "./physics";
 
 export interface PlayerInput extends DriverInput {
@@ -381,7 +381,7 @@ function useItem(race: RaceState, kart: RaceKart, direction: -1 | 1, events: Rac
   const course = getCourse(race.options.courseId, race.options.mirror);
   const s = kart.state;
   const roadOnly = ITEM_INTERACTIONS[held.item].roadOnly;
-  const projection = course.projectRoad(s.x, s.z);
+  const projection = course.projectRoad(s.x, s.z, s.y + .8);
   const features = roadFeatures(course, projection);
   if (roadOnly && (s.mode !== "ground" || features.gap || projection.separation > features.halfWidth - .5)) return;
   const needed = ["boost", "triple-boost", "rapid-boost", "invincible", "autopilot"].includes(held.item) ? 0 :
@@ -403,7 +403,7 @@ function useItem(race: RaceState, kart: RaceKart, direction: -1 | 1, events: Rac
       boost(race, kart, id, .95, events);
       if (item === "rapid-boost" && held.ttl < 0) held.ttl = 6;
       break;
-    case "slip": shot("trap", 0, s.yaw + Math.PI, { ttl: 22, y: course.surfaceHeight(s.x, s.z) + .25, arm: .45 }); break;
+    case "slip": shot("trap", 0, s.yaw + Math.PI, { ttl: 22, y: course.surfaceHeight(s.x, s.z, projection) + .25, arm: .45 }); break;
     case "bounce": shot("projectile", 39, heading, { ttl: 7, charges: 5 }); break;
     case "homing": shot("projectile", 36, heading, { ttl: 7, target: direction === 1 ? targetAhead(race, kart)?.id ?? null : null }); break;
     case "leader": {
@@ -583,18 +583,20 @@ function updateEffects(race: RaceState, course: CourseQuery, events: RaceEvent[]
       continue;
     }
     if (e.kind === "barrier" || e.kind === "decoy") {
-      const from = course.projectRoad(e.x, e.z);
+      const from = course.projectRoad(e.x, e.z, e.y + .8);
       const road = advanceRoad(course, from, e.age >= e.arm ? e.direction * (e.kind === "barrier" ? 21 : e.vx) * STEP : 0);
-      const projected = course.projectRoad(road.x, road.z);
+      const projected = course.projectRoad(road.x, road.z, road.y + .01);
       const features = roadFeatures(course, projected);
       e.u = road.u;
       if (features.gap || Math.abs(e.lane) > features.halfWidth - .8 ||
         course.format === "sectors" && (e.u <= 0 || e.u >= 1)) { e.ttl = 0; continue; }
       e.x = road.x + road.dz * e.lane; e.z = road.z - road.dx * e.lane; e.y = road.y + .45;
     } else if (e.kind === "bomb") {
+      const previousY = e.y;
       e.vy -= 9.81 * STEP;
       e.x += e.vx * STEP; e.z += e.vz * STEP; e.y += e.vy * STEP;
-      const floor = course.surfaceHeight(e.x, e.z) + .4;
+      const road = course.projectRoad(e.x, e.z, previousY + .8);
+      const floor = (road.y <= previousY + .8 ? course.surfaceHeight(e.x, e.z, road) : course.terrainHeight(e.x, e.z)) + .4;
       if (e.y < floor) { e.y = floor; e.vy = 0; e.vx *= .9; e.vz *= .9; }
       effectScenery(e, course);
       if (e.age >= e.arm && race.karts.some(k => k !== owner && !protectedKart(k) && distance(k.state, e) < 1.6 && Math.abs(k.state.y - e.y) < 2)) {
@@ -631,10 +633,10 @@ function updateEffects(race: RaceState, course: CourseQuery, events: RaceEvent[]
       }
       if (e.age >= e.arm) { e.x += e.vx * STEP; e.z += e.vz * STEP; }
       if (e.item === "returning" && e.age > 1.1 && distance(e, owner.state) < 1.6) { e.ttl = 0; continue; }
-      const road = course.projectRoad(e.x, e.z);
+      const road = course.projectRoad(e.x, e.z, e.y + .8);
       const features = roadFeatures(course, road);
       if (!target && e.item !== "leader") {
-        const floor = course.surfaceHeight(e.x, e.z);
+        const floor = road.y <= e.y + .8 ? course.surfaceHeight(e.x, e.z, road) : course.terrainHeight(e.x, e.z);
         e.y = floor + (e.item === "fire" ? .5 + Math.abs(Math.sin(e.age * 13)) * .65 : .65);
         if (features.gap && e.y <= course.waterLevel + .7) e.ttl = 0;
       }
@@ -679,12 +681,32 @@ export function botInput(race: RaceState, kart: RaceKart): PlayerInput {
   const course = getCourse(race.options.courseId, race.options.mirror);
   const s = kart.state;
   const airborne = s.mode === "glider";
-  const flight = nearbyFlight(course, s.roadU, .06);
-  const look = airborne && flight ? Math.max(s.roadU + .025, flight.end + .008) : s.roadU + .025;
-  const target = course.sampleRoad(look);
-  const near = course.sampleRoad(s.roadU), ahead = course.sampleRoad(s.roadU + .03);
-  const turn = Math.abs(angleDifference(Math.atan2(ahead.dx, ahead.dz), Math.atan2(near.dx, near.dz)));
+  const road = course.projectRoad(s.x, s.z, s.y + .8);
+  const near = course.sampleRoad(s.roadU);
+  let flight: (typeof course.glides)[number] | undefined;
+  for (const gap of course.glides) {
+    if (near.distance >= course.sampleRoad(gap.start).distance - 32 &&
+      (airborne || near.distance <= course.sampleRoad(gap.end).distance + 12) &&
+      (!flight || gap.start > flight.start)) flight = gap;
+  }
+  const landingEdge = flight ? course.sampleRoad(flight.end) : null;
+  const landing = landingEdge ? advanceRoad(course, course.projectRoad(landingEdge.x, landingEdge.z), 8) : null;
   const tune = tuningForBuild(kart.build, race.options.speedClass);
+  const lookahead = airborne ? clamp(s.speed * 1.25 / tune.glideHandling, 22, 42) : 22;
+  let target = advanceRoad(course, road, lookahead);
+  if (airborne && landing && landing.distance - near.distance > lookahead) target = landing;
+  const ahead = advanceRoad(course, road, 28);
+  const turn = Math.abs(angleDifference(Math.atan2(ahead.dx, ahead.dz), Math.atan2(near.dx, near.dz)));
+  let pitch = 0;
+  if (airborne && landing) {
+    // Solve the shared glider's damped vertical response for the actual landing height.
+    const destination = near.distance > landing.distance ? advanceRoad(course, road, 8) : landing;
+    const time = Math.max(.25, Math.hypot(destination.x - s.x, destination.z - s.z) / Math.max(9, Math.hypot(s.vx, s.vz)));
+    const response = -Math.expm1(-GLIDE_DYNAMICS.response * time) / GLIDE_DYNAMICS.response;
+    // Aim through touchdown clearance, not asymptotically at the resting kart height.
+    const vertical = (destination.y - s.y - s.vy * response) / (time - response);
+    pitch = clamp((vertical + GLIDE_DYNAMICS.gravity / tune.glideLift) / GLIDE_DYNAMICS.pitchAuthority, -1, 1);
+  }
   const skill = race.options.difficulty === "easy" ? .9 : race.options.difficulty === "hard" ? 1.06 : 1;
   let desired = (turn > .6 ? 14 : turn > .32 ? 19 : 26) * skill * Math.sqrt(tune.handling);
   desired = Math.min(tune.topSpeed, desired);
@@ -699,17 +721,19 @@ export function botInput(race: RaceState, kart: RaceKart): PlayerInput {
   const held = kart.held[rear(kart)];
   const { previous, target: gate, span } = checkpointSpan(course, s.nextCheckpoint);
   const travelled = course.format === "sectors" ? s.roadU - previous.u : wrap(s.roadU - previous.u, 1);
+  // Crossing a curved gate's plane can precede its nearest-centreline parameter.
+  const besidePrevious = course.format === "laps" && travelled > .5 &&
+    Math.hypot(s.x - previous.x, s.z - previous.z) < course.roadWidth;
   const beyondEnd = course.format === "sectors" && s.roadU >= .999 &&
     (s.x - gate.x) * gate.dx + (s.z - gate.z) * gate.dz > 12;
-  const missedGate = (travelled > span * 1.5 || beyondEnd) &&
+  const missedGate = (!besidePrevious && travelled > span * 1.5 || beyondEnd) &&
     !(course.format === "laps" && s.lap === 1 && s.nextCheckpoint === 1 && s.roadU > .97);
   const use = !!held && race.tick % (race.options.difficulty === "easy" ? 90 : 45) === 0 &&
     (!["boost", "triple-boost", "rapid-boost", "static", "invincible"].includes(held.item) || turn < .16 && Math.abs(error) < .2);
   return {
     ...NEUTRAL_PLAYER, throttle: s.speed < desired ? 1 : 0,
     brake: s.speed > desired + 2 ? .25 : 0, steer: clamp(error * 2.5 / tune.handling, -1, 1),
-    pitch: airborne && flight && s.roadU > flight.end - .018 ? -.8 :
-      airborne && tune.glideLift < 1 ? .25 : airborne && race.options.speedClass === 50 ? .35 : 0,
+    pitch,
     useItem: use, swap: !held && !!kart.held[s.driver] && s.swapTime === 0,
     throwDirection: held && ["slip", "triple-slip"].includes(held.item) ? -1 : 1,
     recover: kart.stuckTicks > 240 || missedGate && s.mode === "ground",
@@ -883,7 +907,7 @@ export function stepRace(race: RaceState, inputs: Readonly<Record<string, Player
     if (old.x === k.state.x && old.z === k.state.z) continue;
     const progress: DrivingEvent[] = [];
     advanceKartProgress(k.state, old.x, old.z, progress, course);
-    k.state.roadU = course.projectRoad(k.state.x, k.state.z).u;
+    k.state.roadU = course.projectRoad(k.state.x, k.state.z, k.state.y + .8).u;
     drivingEvents(race, k, progress, events);
   }
   for (const pickup of race.pickups) {

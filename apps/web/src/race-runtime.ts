@@ -115,6 +115,7 @@ export class RaceRuntime {
     if (this.mode !== "menu") return;
     this.online?.dispose();
     this.view.loadCourse("butterbell");
+    this.sound.setCourse("butterbell");
     const id = this.input.players[0]?.id ?? "local-1";
     this.session = new LocalRaceSession(PREVIEW_OPTIONS, [{ id: "preview", name, build, players: [id, null] }]);
     this.ghost = null;
@@ -151,6 +152,7 @@ export class RaceRuntime {
     this.online?.dispose();
     this.session = new LocalRaceSession(options, entries);
     this.view.loadCourse(options.courseId);
+    this.sound.setCourse(options.courseId);
     this.ghost = options.mode === "time-trial" ? ghost : null;
     this.ghostState = createKart(getCourse(options.courseId, options.mirror));
     this.recorder = options.mode === "time-trial" ? new GhostRecorder() : null;
@@ -173,6 +175,7 @@ export class RaceRuntime {
     this.online?.dispose();
     this.session = new LocalRaceSession(state.options, state.karts);
     this.view.loadCourse(state.options.courseId);
+    this.sound.setCourse(state.options.courseId);
     this.ghost = null;
     this.recorder = null;
     this.configureViews(new Set(identities.values()));
@@ -180,14 +183,15 @@ export class RaceRuntime {
     if (!this.disposed && generation === this.generation) this.setMode("menu");
   }
 
-  async startOnline(network: KartsickNetwork<RaceState, RaceEvent[]>, identities: ReadonlyMap<string, string>): Promise<void> {
+  async startOnline(network: KartsickNetwork<RaceState, RaceEvent[]>, identities: ReadonlyMap<string, string>, terminal?: Checkpoint<RaceState>): Promise<void> {
     const generation = ++this.generation;
     this.input.clear();
     this.setMode("loading");
     this.online?.dispose();
-    const session = new OnlineRaceSession(network, identities, this.callbacks.warning);
+    const session = new OnlineRaceSession(network, identities, this.callbacks.warning, undefined, terminal);
     this.session = session;
     this.view.loadCourse(session.race.options.courseId);
+    this.sound.setCourse(session.race.options.courseId);
     this.ghost = null;
     this.recorder = null;
     this.configureViews(session.localIds);
@@ -196,14 +200,20 @@ export class RaceRuntime {
     session.alignCountdown();
     session.resetClock();
     this.lastFrame = performance.now();
-    this.setMode("race");
+    this.setMode(terminal ? "results" : "race");
     this.enableSound();
   }
 
-  restoreOnline(checkpoint: Checkpoint<RaceState>): void {
+  async restoreOnline(checkpoint: Checkpoint<RaceState>, network: KartsickNetwork<RaceState, RaceEvent[]>, identities: ReadonlyMap<string, string>): Promise<void> {
     const session = this.online;
-    if (!session) throw new Error("There is no loaded online race to restore.");
-    session.restore(checkpoint);
+    if (session) session.restore(checkpoint);
+    else if (checkpoint.state.phase === "finished") await this.startOnline(network, identities, checkpoint);
+    else throw new Error("There is no loaded online race to restore.");
+  }
+
+  showOnlineResults(): void {
+    this.input.clear();
+    this.setMode("results");
   }
 
   pause(reason = "Take a breather."): void {
@@ -365,6 +375,7 @@ export class RaceRuntime {
       dropped: this.session.droppedSeconds, views: structuredClone(this.views),
       renderWidth: this.view.engine.getRenderWidth(), renderHeight: this.view.engine.getRenderHeight(),
       activeMeshes: this.view.scene.getActiveMeshes().length, totalVertices: this.view.scene.getTotalVertices(),
+      renderedCourse: this.view.courseId, materials: this.view.scene.materials.length, textures: this.view.scene.textures.length,
       online: this.online?.metrics() ?? null,
     };
   }

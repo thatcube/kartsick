@@ -13,6 +13,7 @@ interface RoomCallbacks {
   ensurePlayers(count: number): void;
   connected(): void;
   started(): void;
+  results(room: Room, participated: boolean): void;
   lobby(): void;
   left(): void;
   warning(message: string): void;
@@ -35,6 +36,11 @@ export function useOnlineRoom(callbacks: RoomCallbacks) {
     const own = value.participants.find(participant => participant.id === network.current!.participantId);
     return new Map(current.current.players().flatMap((player, index) => own?.players[index] ? [[player.id, own.players[index].id]] : []));
   }
+  function ownKartIds(value = network.current?.room): ReadonlySet<string> {
+    const ids = new Set(identities(value).values());
+    return new Set(value?.karts.flatMap((kart, index) =>
+      kart.seats.some(id => id !== null && ids.has(id)) ? [`online-kart-${index + 1}`] : []) ?? []);
+  }
   async function operation(action: () => Promise<void>): Promise<void> {
     if (busyRef.current) { current.current.warning("Wait for the current room operation to finish."); return; }
     busyRef.current = true;
@@ -52,7 +58,8 @@ export function useOnlineRoom(callbacks: RoomCallbacks) {
         restoreCheckpoint: (checkpoint: Parameters<RaceRuntime["restoreOnline"]>[0]) => {
           const game = current.current.game();
           if (!game) throw new Error("The game renderer is not ready for checkpoint restoration.");
-          game.restoreOnline(checkpoint);
+          if (!network.current) throw new Error("The room connection is not ready for checkpoint restoration.");
+          return game.restoreOnline(checkpoint, network.current, identities());
         },
       };
       const value = invitation ? await KartsickNetwork.join<RaceState, RaceEvent[]>(invitation, settings) : await KartsickNetwork.create<RaceState, RaceEvent[]>(settings);
@@ -65,6 +72,7 @@ export function useOnlineRoom(callbacks: RoomCallbacks) {
       setStatus("Connected to room");
       let activeRace = false;
       let lastPhase: Room["phase"] | null = null;
+      let lastResult: string | null = null;
       unsubscribe.current = value.subscribe(event => {
         if (!alive.current || network.current !== value) return;
         if (event.type === "error") current.current.warning(event.error.message);
@@ -81,8 +89,12 @@ export function useOnlineRoom(callbacks: RoomCallbacks) {
           activeRace = false;
           if (lastPhase !== null && lastPhase !== "lobby") {
             current.current.lobby();
-            if (event.room.reason) current.current.warning(event.room.reason);
+            if (event.room.reason && lastPhase !== "results") current.current.warning(event.room.reason);
           }
+        } else if (event.room.phase === "results" && event.room.lastRound?.roundId !== lastResult) {
+          lastResult = event.room.lastRound!.roundId;
+          current.current.game()?.showOnlineResults();
+          current.current.results(event.room, activeRace);
         } else if (event.room.phase === "racing" && !activeRace) {
           activeRace = true;
           const game = current.current.game();
@@ -144,5 +156,5 @@ export function useOnlineRoom(callbacks: RoomCallbacks) {
       network.current = null;
     };
   }, []);
-  return { network, room, busy, status, peers, identities, operation, connect, leave, toggleReady };
+  return { network, room, busy, status, peers, identities, ownKartIds, operation, connect, leave, toggleReady };
 }

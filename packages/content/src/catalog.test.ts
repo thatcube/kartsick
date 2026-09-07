@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  BODIES, BODY_IDS, CHARACTER_IDS, CHARACTERS, CUPS, DECALS, DECAL_IDS, DEFAULT_BUILD,
+  BODIES, BODY_IDS, CHARACTER_IDS, CHARACTERS, COURSES, CUPS, DECALS, DECAL_IDS, DEFAULT_BUILD,
   GLIDERS, GLIDER_IDS, ITEMS, ITEM_IDS, PAINTS, PAINT_IDS, WHEELS, WHEEL_IDS,
   availableSeries, combinedStats, getCourse, normalizeBuild, validBuild,
 } from "./index";
@@ -30,9 +30,16 @@ describe("approved complete metadata", () => {
     }
     expect(BODIES.every(p => Object.values(p.stats).some(n => n < 1) && Object.values(p.stats).some(n => n > 1))).toBe(true);
   });
-  it("supports approved course identities without inventing unreviewed track layouts or cups", () => {
-    for (const cup of CUPS) expect(availableSeries(cup.courses)).toBe(false);
-    expect(() => getCourse("lastlight")).toThrow(/checkpoint/);
+  it("connects authored courses and only enables circuits with their actual complete schedule", () => {
+    for (const cup of CUPS) expect(availableSeries(cup.courses)).toBe(cup.courses.every(id => COURSES.some(course => course.id === id && course.available)));
+    for (const course of COURSES) {
+      if (course.available) {
+        const query = getCourse(course.id);
+        expect(query.id).toBe(course.id);
+        expect(query.format).toBe(course.format);
+        expect(query.version).not.toBe("");
+      } else expect(() => getCourse(course.id)).toThrow(/still in production/);
+    }
     expect(availableSeries(["butterbell"])).toBe(true);
   });
   it("reflects geometry, queries, normals, collision shapes and lateral signs together", () => {

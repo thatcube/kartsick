@@ -19,6 +19,14 @@ connect invitation, seating, shared builds, readiness and lifecycle operations.
 `tests/browser/online-game.spec.ts` exercises actual rendered gameplay and host
 handoff in two Chromium processes, separately from the transport-only probes.
 
+The application uses `KartsickNetwork<RaceState, RaceEvent[]>` with strict
+`decodeRaceEventBatch` validation and at most one bounded, same-tick reliable event
+batch per simulation step. Finished-state snapshots are retried until
+`getSnapshotAcks()` confirms receipt, and the final checkpoint is published without
+advancing physics. Equal-tick snapshots with newer transport sequences remain
+valid for those retries. Compression leaves event batches, receipt acknowledgments
+and final-state/checkpoint contents unchanged.
+
 After checkpoint restoration, browsers use the room's shared server-scheduled
 resume time rather than each browser's local restoration time. In-game traffic
 diagnostics accumulate sampled data-channel counters across all peers and
@@ -36,7 +44,7 @@ npm run dev
 
 The existing Vite origin serves both the application and:
 
-- `POST /rooms` with JSON `{"version":2}` → `201 {version:2, code}`.
+- `POST /rooms` with JSON `{"version":3}` → `201 {version:3, code}`.
 - `GET /rooms/ABCDEFGH` upgraded to a WebSocket.
 - Invitations use `/?room=ABCDEFGH`; the eight-character code can also be entered
   directly. There is no account, password, matchmaking, or profile service.
@@ -56,7 +64,7 @@ persistence across object hibernation; neither adapter stores race state.
 ## Packages and actual endpoints
 
 - `packages/protocol`: legacy version-one single-driver parser plus separate
-  version-two room, complete-player-input, snapshot, checkpoint, event, and
+  version-three room, complete-player-input, snapshot, checkpoint, event, and
   bounded-fragment schemas. The legacy parser/tests remain compatible.
 - `apps/signaling/src/room.ts`: adapter-independent room state machine.
 - `apps/signaling/src/local.ts`: real Node HTTP/`ws` adapter and Vite integration.
@@ -106,6 +114,37 @@ signaling process.
 simulation integration the information needed for temporary AI/solo takeover.
 The networking module does not simulate that takeover or generate finishes.
 
+### Terminal results and online circuits
+
+The room's `round` freezes the started course, round identity and kart roster.
+After actual simulation completion, the authority sends
+`finish {epoch, roundId, courseId, checkpointId, tick, results}` only when the
+terminal checkpoint is committed. Signaling validates the authority, epoch,
+round, course, checkpoint, exact roster and strict result rows before entering
+`results`. This is an attestation by the trusted authority, not anti-cheat
+consensus or an independent server simulation.
+
+`lastRound` retains the accepted results and checkpoint ID/tick/digest; `series`
+retains the exact Town, Horizon or tour schedule and cumulative points. Terminal
+snapshots must match the committed state's digest. Neither results retries nor
+departures advance physics, rewrite the finished roster or refresh its tick.
+Only an accepted finished checkpoint escapes the five-second active-checkpoint
+freshness limit. A migration using it returns to `results`, not a new race.
+
+A late results-only arrival displays the metadata without constructing a fake
+finished simulation or awarding a played race. The authority can send that
+arrival the retained checkpoint, making it a real restoration candidate. If no
+holder survives, the accepted scoreboard remains with an explicit restoration
+limitation rather than fabricated state.
+
+The host's `next-course {epoch, roundId}` enters a readiness lobby with preserved
+kart slots, builds, seats and points. Circuit configuration stays fixed until
+the host explicitly ends it or sets up a rematch. New participants may take a
+slot for the next course; standings belong to that slot. All courses must be
+available, and a completed circuit has no next course. Metadata is bounded
+below the signaling envelope limit. The server persists these results and
+references, never the complete race state.
+
 ## Browser API and simulation integration
 
 ```ts
@@ -145,7 +184,9 @@ The `network.connection` object exposes:
 | `setBuild(kart, build)` | Set validated characters/parts/cosmetics |
 | `configure(config)` | Full validated lobby config, host only |
 | `start()` | Server-selected seed, new epoch, start scheduled three seconds ahead |
-| `returnToLobby()` / `rematch()` | Same room and seats, cleared readiness, no fabricated finishes |
+| `finishRound(command)` | Authority attestation of the current round against its committed terminal checkpoint |
+| `nextCourse(epoch, roundId)` | Host advances the exact circuit into a readiness lobby, preserving points |
+| `returnToLobby()` / `rematch()` | Same room and seats, cleared readiness and explicit circuit/results reset |
 | `syncClock()`, `serverNow()`, `clock` | Request/response midpoint wall-clock estimate and measured signaling RTT |
 | `setCapability({visible, capable})` | Explicit availability update |
 | `reconnect()` | Reopen signaling with the rotating credential |
@@ -195,7 +236,8 @@ authoritative snapshots, not browser wall clocks, decide race progress.
 - `resync` tells the authority that a new/reconnected peer needs fresh state;
   respond with the current snapshot, not an invented result.
 - `isAuthority` is false on signaling loss, paused/migrating/lobby phases, or a
-  hidden document. Gate authoritative simulation and state publication on it.
+  hidden document. It can remain true in `results` for immutable terminal-state
+  delivery, but only `racing` permits simulation steps or new checkpoints.
 - `retryConnections()` requests a fresh signaling/peer attempt after an explicit
   failure. Automatic negotiation attempts are bounded, not an endless loop.
 - `dispose()` closes owned peers, channels, timers and signaling, retaining the
@@ -240,6 +282,161 @@ to the server authority epoch; obsolete offers/answers/ICE are ignored.
 Periodic WebRTC stats expose measured RTT, data-channel bytes and direct/unknown
 route classification, without collecting raw candidate addresses. These numbers
 are not yet representative remote-network latency or relay-egress measurements.
+
+## Negotiated lossless state compression
+
+Snapshots and complete checkpoints now support **`zlib-v1`**, using the pinned
+`pako` 2.1.0 implementation. This is independent-message compression of the
+existing complete JSON bytes, **not** numeric rounding, a partial-state patch,
+or a delta/dictionary chain. Losing one snapshot does not make the next snapshot
+undecodable. RNG, item/effect IDs, full-precision JSON numbers, applied input
+acknowledgments and checkpoint SHA-256 verification are unchanged.
+
+No caller changes are required:
+
+- `broadcastSnapshot` still returns `{sequence, sent, dropped}` synchronously.
+- `commitCheckpoint` keeps its existing asynchronous publication/commit contract.
+- Inputs, receipt acknowledgments, resync requests and generic reliable `E`
+  events remain ordinary version-three JSON. Application `RaceEvent[]` batches
+  are neither rewritten nor implicitly compressed.
+- Compression, envelope preparation and fragmentation are cached once per
+  selected codec for a broadcast, not repeated for every peer. The existing
+  state-validation roundtrip is retained.
+- Small payloads (under 1 KiB) and payloads that would not shrink after
+  base64/envelope overhead stay plain, even with compression-capable peers.
+
+### Optional compression, explicit agreement
+
+The authority optionally opens one extra **reliable, ordered**
+`kartsick-codec-v1` data channel. Its versioned offer names `zlib-v1` and carries
+a fresh nonce plus the current authority epoch. The receiver accepts that exact
+codec/nonce/epoch before the sender enables compression. Receiving is enabled
+before acceptance is sent, so movement/control traffic may safely overtake the
+probe's final response.
+
+The initiator closes the probe after receiving acceptance. The receiver waits
+for that close or its bounded timeout; previously accepted in-flight compressed
+packets remain decodable for that peer. All permission is cleared on peer
+disposal/epoch replacement. The negotiation timeout is three seconds **after the
+probe opens**, not while ICE is still establishing the connection.
+
+Peers without compression support close unknown channel labels. That closes
+only this optional probe: the sender continues plain snapshots/checkpoints,
+without sending unknown capability packets to the game-message parser. A
+same-protocol authority that never opens a probe also remains usable.
+Protocol-version-2 clients cannot join a version-3 room. Unsupported/malformed/
+timed-out probes and optional-channel creation failures fall back quietly to
+plain traffic; they do not restart otherwise working game channels.
+
+Compression is never sent speculatively. The receiver rejects compressed
+envelopes that were not accepted on this particular peer connection. The
+ordinary application/event schema still needs to be understood by both peers;
+codec negotiation does not silently translate different application protocols.
+
+### Framing, decompression bounds and integrity
+
+The self-versioned envelope has exactly five fields:
+`kartsickCompression: 1`, `codec: "zlib-v1"`, `epoch`, `bytes` (exact original
+UTF-8 length) and canonical-base64 `data`. Both the envelope and the original
+decoded packet must fit the existing **256-KiB** message cap. Large envelopes
+use the **existing** 32-KiB chunk/64-KiB SCTP-message fragment protocol; there is
+no second reassembly queue or unbounded decompression stream.
+
+The decoder deliberately uses pako's pinned **low-level** zlib interface,
+not its high-level allocating/concatenating inflater:
+
+1. Reject overlarge strings/UTF-8 and invalid declared lengths before creating
+   an encoded input/output array. Decode only bounded canonical base64.
+2. Allocate exactly the validated declared output length, at most 256 KiB.
+3. Decode one zlib stream with `windowBits: 15`: bounded 32-KiB history and
+   fixed Huffman tables. Gzip and preset dictionaries are not accepted.
+4. If the output buffer fills, permit only a **one-byte** sentinel buffer to
+   finish reading the end marker/checksum. Any extra output byte is an error.
+5. Require `Z_STREAM_END`, exact produced length, full input consumption and
+   a valid Adler-32 checksum. Trailing bytes, concatenated streams, corrupt
+   checksums and truncation—including a valid JSON prefix followed by missing
+   or excess compressed data—are rejected before the application decoder runs.
+6. Decode UTF-8 strictly, then run the normal full packet/application-state
+   decoder. Checkpoints additionally retain their existing SHA-256 validation.
+
+Bounds tests use independent Node zlib stored/fixed/dynamic streams, truncated
+streams at every byte boundary, and 8-/16-MiB amplification fixtures. An
+instrumented 16-MiB expansion attempt cannot allocate an output array over
+256 KiB; aggregate observed typed-array allocations remain under the output cap
+plus 70,000 bytes. An oversized declared length allocates no output array at all.
+These guarantees require the low-level buffer/end-counter checks: do not replace
+them with `inflate()`/`unzlibSync()` followed by a post-allocation length check.
+
+Backpressure still uses actual selected wire bytes against the existing
+512-KiB movement/reliable budgets and 64 pending reliable fragments. Reliable
+queued checkpoints/events cannot overtake each other when the control channel
+opens before movement. No state or compressed payload moves over signaling.
+
+### Measured traffic and cost
+
+Measured on **Apple M4 Max, macOS/Darwin, Node v26.7.0**, September 7, 2026.
+The test advances the actual engine at 60 Hz with eight varied kart builds and
+sixteen independent synthetic input owners. It samples 90 evolving snapshots
+at 20 Hz after warm-up, then uses real `grantItem`/`stepRace` effects for the
+busy scenario (up to **64 live effects**). The checkpoint measurements use those
+complete busy race states and sixteen applied-input acknowledgments.
+
+Every sample is checked for byte-identical JSON roundtrip and accepted by the
+real `parseRaceState`; checkpoint hashes are recomputed. Ten warm-up samples
+per scenario are excluded from timings.
+
+| Message | Mean plain bytes | Mean compressed bytes | Reduction | Encode p50 / p95, ms | Decode p50 / p95, ms |
+|---|---:|---:|---:|---:|---:|
+| Active eight-kart snapshot | 16,242 | 4,608 | 71.63% | 0.209 / 0.267 | 0.223 / 0.345 |
+| Busy item snapshot | 35,653 | 11,475 | 67.82% | 0.441 / 0.507 | 0.481 / 0.617 |
+| Complete busy checkpoint | 35,763 | 11,573 | 67.64% | 0.561 / 0.685 | 0.628 / 0.789 |
+
+For comparison, the same cached pipeline without compression measured:
+
+| Message | Plain encode p50 / p95, ms | Plain decode p50 / p95, ms |
+|---|---:|---:|
+| Active snapshot | 0.021 / 0.034 | 0.124 / 0.165 |
+| Busy snapshot | 0.046 / 0.060 | 0.252 / 0.357 |
+| Complete busy checkpoint | 0.128 / 0.167 | 0.357 / 0.447 |
+
+Bytes are the sum of UTF-8 data-channel application messages, including
+base64/envelope/fragment overhead—not UDP/DTLS/SCTP headers, retransmissions,
+one-time capability probes or relay billing. Encode timing includes JSON
+serialization and selected wire preparation; decode includes reassembly,
+decompression, JSON parsing and full schema validation/deep-copy. Checkpoint
+timings also include SHA-256 generation/verification. Existing application
+simulation/rendering and the host's preceding state-validation roundtrip are
+not included. Timings are **Node measurements, not browser/M1 acceptance**.
+
+Reproduce without opening a browser:
+
+```sh
+npm test -- apps/web/src/network/compression-race.test.ts --disableConsoleIntercept
+```
+
+The compression change has **34 targeted Vitest tests** (63 with the existing
+29 protocol/server tests), including mixed plain/compressed hub wiring,
+corruption/bounds, fragmentation/drop independence, negotiation timeout/cleanup,
+epoch fencing, synchronous return values, once-per-codec encoding and reliable
+checkpoint/event ordering. Hub wiring tests explicitly use mock channels.
+**No browser was launched for this change**: real two-browser gameplay and
+host-migration validation is handed back to the integration owner.
+
+### Dependency and license
+
+`apps/web/package.json` declares runtime `pako: 2.1.0` (no transitive runtime
+dependencies) and development typings `@types/pako: 2.0.4`; the lockfile pins
+both. Pako is licensed **MIT AND Zlib**. Complete notices are retained in
+`compression-license.ts` and in the production bundle through the read-only
+`KartsickNetwork.compressionLicense` text, available for a credits view.
+Production bundling was checked for both full notices; relying only on source
+comments would not suffice because the current minifier removes them.
+
+The zlib implementation is unmodified. Kartsick's bounds/framing and minimal
+low-level declarations are separate helpers. Dependency upgrades must rerun the
+stream-completion, amplification and allocation-bound regressions. No signaling,
+cloud service, relay activation, billing configuration or budget guarantee
+changes are part of compression.
 
 ## Authority loss and visibility
 
@@ -351,15 +548,38 @@ part of full release acceptance, not something these direct tests establish.
 
 ## Verification and explicit gaps
 
-Latest local verification: **29 Vitest tests and 6 Playwright tests passed**,
-using Chromium **153.0.8010.12**. Full workspace typechecking, the production
-application build, and the Worker dry-run also succeeded. These are local
-transport/build results, not remote-network or physical-controller evidence.
+The current protocol/series/online-session/compression selection passes **132
+Vitest tests**. Both real-game browser scenarios also pass with protocol 3 and
+compression enabled: remote driving and live host recovery, plus four couch
+controllers mixed with a remote human. Full workspace typechecking and the
+production application build and non-deploying Worker dry-run pass. These are
+local results, not remote-network or physical-controller
+evidence. The six current transport scenarios pass as well, including sixteen
+synthetic input owners, storage-blocked reconnect and failed restoration.
+
+`tests/browser/online-circuits.spec.ts` drives a complete real Town circuit
+through ordinary controller inputs. After Butterbell, it waits beyond the
+active-checkpoint freshness window, interrupts and resumes guest signaling,
+confirms renewed checkpoint possession, loses the host, admits a scoreboard-only
+spectator, then loses the replacement host. The late checkpoint holder restores
+the identical terminal state, waits for actual reservation expiry, drives
+Escaluna and Tiltglass, retains 30 kart-slot points, saves a gold medal, and
+explicitly resets via rematch. Its local counter records only its two played
+rounds. No finish ticks, checkpoints, progress or substitute schedules are
+injected. This one-kart tandem/circuit case does not establish full-occupancy
+rendered circuits, Horizon/tour completion or physical-controller acceptance.
+
+Terminal regression coverage also freezes input acknowledgments when a
+multi-step render frame finishes partway through its callbacks, commits an
+authority-held pending checkpoint when the last guest leaves, and renews
+checkpoint possession after signaling reconnect or epoch change. A sole guest
+without the proposal cannot accidentally commit it. A stale failed
+acknowledgment request cannot erase a newer connection generation's acknowledgment.
 
 ```sh
 npm run typecheck --workspace @kartsick/signaling
-npm test -- packages/protocol/src/protocol.test.ts \
-  packages/protocol/src/rooms.test.ts packages/protocol/src/local-signaling.test.ts
+npm test -- packages/protocol/src packages/simulation/src/series.test.ts \
+  apps/web/src/network apps/web/src/online-race.test.ts
 mkdir -p .network-browser-runtime
 TMPDIR="$PWD/.network-browser-runtime" npm run test:browser -- \
   tests/browser/network.spec.ts --output=test-results/network-transport

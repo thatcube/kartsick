@@ -60,6 +60,7 @@ function App(): React.JSX.Element {
   const [program, setProgram] = useState<RaceProgram>("quick");
   const [series, setSeries] = useState<SeriesProgress | null>(null);
   const seriesRef = useRef(series);
+  const savedOnlineRounds = useRef(new Set<string>());
   seriesRef.current = series;
   const [assignments, setAssignments] = useState<Record<string, number>>({ "local-1": 0, "local-2": 1, "local-3": 2, "local-4": 3 });
   const [players, setPlayers] = useState<LocalPlayer[]>(() => [{
@@ -100,6 +101,22 @@ function App(): React.JSX.Element {
     },
     connected: () => { setPage("online"); setReturnPage("online"); },
     started: () => { setPage("home"); setResult(null); setResultMessage(null); seriesRef.current = null; setSeries(null); },
+    results(room, participated) {
+      setPage("home");
+      const completed = room.lastRound;
+      if (!completed) throw new Error("The room has no accepted results.");
+      const own = online.ownKartIds(room);
+      if (!participated || !own.size || savedOnlineRounds.current.has(completed.roundId)) return;
+      savedOnlineRounds.current.add(completed.roundId);
+      if (savedOnlineRounds.current.size > 32) savedOnlineRounds.current.delete(savedOnlineRounds.current.values().next().value!);
+      let next = { ...saveRef.current, races: saveRef.current.races + 1,
+        wins: saveRef.current.wins + Number(completed.results.some(result => result.position === 1 && result.finished && own.has(result.id))) };
+      const medal = room.series && seriesMedal(room.series, own);
+      if (medal && room.series) next = keepMedal(next, { cup: room.series.cup, speedClass: room.config.speed, mirror: room.config.mirror, ...medal });
+      const persisted = save(next);
+      setResultMessage(medal ? `${medal.medal[0].toUpperCase() + medal.medal.slice(1)} medal${persisted ? " saved to the trophy shelf!" : " for this visit. Browser saving is unavailable."}` :
+        room.series && !nextSeriesCourse(room.series) ? "Circuit complete. Finish every course and place in the top three to earn a medal." : "Results saved to the room.");
+    },
     lobby: () => {
       const profile = saveRef.current.profiles.find(profile => profile.id === playersRef.current[0].id)!;
       runtime.current?.menu(profile.build, profile.name);
@@ -214,6 +231,14 @@ function App(): React.JSX.Element {
   }
 
   async function nextRound(): Promise<void> {
+    if (online.network.current) {
+      await online.operation(async () => {
+        const network = online.network.current, room = network?.room;
+        if (!network || room?.phase !== "results" || !room.round) throw new Error("Wait for the room's completed results before continuing.");
+        await network.connection.nextCourse(room.epoch, room.round.id);
+      });
+      return;
+    }
     const game = runtime.current, progress = seriesRef.current;
     if (!game || !progress || !result) throw new Error("There is no completed circuit round to continue.");
     const courseId = nextSeriesCourse(progress);
@@ -241,6 +266,7 @@ function App(): React.JSX.Element {
   finishAction.current = (race, recorder) => {
     setResult(race);
     setPage("home");
+    if (runtime.current?.online) { setResultMessage("Saving results to the room..."); return; }
     const localIds = runtime.current?.localPlayerIds ?? new Set(playersRef.current.map(player => player.id));
     const own = new Set(race.karts.filter(kart => kart.players.some(id => id !== null && localIds.has(id))).map(kart => kart.id));
     if (race.options.mode === "race") {
@@ -325,7 +351,11 @@ function App(): React.JSX.Element {
     } catch (error) { setFailure(error instanceof Error ? error.message : String(error)); game?.dispose(); }
     const key = (event: KeyboardEvent) => { if (event.code === "F3") { event.preventDefault(); setDebug(value => !value); } };
     window.addEventListener("keydown", key);
-    return () => { cancelled = true; game?.dispose(); runtime.current = null; Reflect.deleteProperty(window, "__KARTSICK_RACE__"); window.removeEventListener("keydown", key); };
+    return () => {
+      cancelled = true; game?.dispose(); runtime.current = null;
+      if (import.meta.env.DEV) Reflect.deleteProperty(window, "__KARTSICK_RACE__");
+      window.removeEventListener("keydown", key);
+    };
   }, []);
 
   useEffect(() => {
@@ -381,6 +411,11 @@ function App(): React.JSX.Element {
   const family = selectedPlayer?.device.kind === "gamepad" ? selectedPlayer.device.family : "generic";
   const localIds = runtime.current?.localPlayerIds ?? new Set(players.map(player => player.id));
   const ownKarts = new Set(mapRace?.karts.filter(kart => kart.players.some(id => id !== null && localIds.has(id))).map(kart => kart.id) ?? []);
+  const terminal = online.room?.round && online.room.lastRound?.roundId === online.room.round.id ? online.room.lastRound : null;
+  const report = terminal ? { options: { courseId: terminal.courseId }, results: terminal.results } : result;
+  const resultOwn = online.room ? online.ownKartIds() : ownKarts;
+  const canAdvanceOnline = !!online.room && online.room.phase === "results" &&
+    online.room.hostId === online.network.current?.participantId && !online.busy;
   const overlay = mode !== "race" && mode !== "loading" && !failure;
   const firstProfile = data.profiles.find(profile => profile.id === players[0].id)!;
 
@@ -443,10 +478,11 @@ function App(): React.JSX.Element {
         {online.room && ownKarts.size === 0 && <button data-pad onClick={() => runtime.current?.cycleSpectator()}>Watch next kart</button>}
         <button data-pad onClick={() => showPage("controls", firstProfile.id)}>Controls</button><button data-pad onClick={() => showPage("settings")}>Settings</button>
         <button data-pad onClick={() => goHome()}>Leave race</button></div></section>}
-    {overlay && page === "home" && mode === "results" && result && <RaceResults race={result} ownKarts={ownKarts} message={resultMessage}
-      series={series} nextRound={() => void nextRound()}
-      rematch={() => online.network.current ? void online.operation(() => online.network.current!.connection.returnToLobby()) : void startRace()}
-      rematchLabel={online.room ? "Set up a rematch" : undefined} rematchDisabled={!!online.room && online.room.hostId !== online.network.current?.participantId}
+    {overlay && page === "home" && mode === "results" && report && <RaceResults race={report} ownKarts={resultOwn}
+      message={[resultMessage, terminal && (online.room?.phase !== "results" || online.room.authorityId === null) && online.room?.reason].filter(Boolean).join(" ") || null}
+      series={online.room ? terminal ? online.room.series : null : series} nextRound={() => void nextRound()} nextRoundDisabled={!!online.room && !canAdvanceOnline}
+      rematch={() => online.network.current ? void online.operation(() => online.network.current!.connection.rematch()) : void startRace()}
+      rematchLabel={online.room ? "Set up a rematch" : undefined} rematchDisabled={!!online.room && !canAdvanceOnline}
       changeRace={() => online.room ? setPage("online") : goHome("setup")} changeLabel={online.room ? "Room" : undefined} home={() => goHome()} />}
   </main>;
 }

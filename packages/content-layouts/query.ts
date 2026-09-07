@@ -67,7 +67,7 @@ export interface LayoutQuery extends CourseQuery {
   layout: CourseLayout;
   routes: readonly LayoutRoute[];
   sectors: readonly number[];
-  projectRoad(x: number, z: number): LayoutProjection;
+  projectRoad(x: number, z: number, maxSurfaceHeight?: number): LayoutProjection;
 }
 export function isLayoutProjection(road: RoadProjection): road is LayoutProjection {
   return "routeId" in road && typeof road.routeId === "string" && "halfWidth" in road && typeof road.halfWidth === "number" &&
@@ -181,12 +181,14 @@ export function createLayoutQuery(layout: CourseLayout, mirror = false): LayoutQ
   });
   const visited = new Uint32Array(segments.length);
   let visit = 0;
-  const projectRoad = (x: number, z: number): LayoutProjection => {
-    if (!Number.isFinite(x) || !Number.isFinite(z)) throw new RangeError("Road projection requires finite coordinates.");
+  const projectRoad = (x: number, z: number, maxSurfaceHeight?: number): LayoutProjection => {
+    if (!Number.isFinite(x) || !Number.isFinite(z) || maxSurfaceHeight !== undefined && !Number.isFinite(maxSurfaceHeight))
+      throw new RangeError("Road projection requires finite coordinates and height.");
     visit = (visit + 1) >>> 0;
     if (visit === 0) { visited.fill(0); visit = 1; }
     let best = Infinity;
     let result: LayoutProjection | null = null;
+    const nearest = maxSurfaceHeight === undefined ? null : new Map<string, LayoutProjection>();
     const consider = (index: number) => {
       if (visited[index] === visit) return;
       visited[index] = visit;
@@ -196,20 +198,32 @@ export function createLayoutQuery(layout: CourseLayout, mirror = false): LayoutQ
       const t = clamp(((x - a.x) * dx + (z - a.z) * dz) / squaredLength, 0, 1);
       const px = mix(a.x, b.x, t), pz = mix(a.z, b.z, t);
       const squared = (x - px) ** 2 + (z - pz) ** 2;
-      if (squared >= best) return;
-      best = squared;
+      const previous = nearest?.get(route.id);
+      if (squared >= best && (!nearest || previous && squared >= previous.separation ** 2)) return;
       const magnitude = Math.sqrt(squaredLength);
-      result = {
+      const candidate: LayoutProjection = {
         x: px, y: mix(a.y, b.y, t), z: pz, dx: dx / magnitude, dz: dz / magnitude,
         u: mix(a.u, b.u, t), distance: mix(a.distance, b.distance, t), separation: Math.sqrt(squared),
         lateral: ((x - px) * dz - (z - pz) * dx) / magnitude,
         routeId: route.id, halfWidth: route.halfWidth, shoulderWidth: route.shoulderWidth, rough: route.rough,
       };
+      if (squared < best) { best = squared; result = candidate; }
+      if (nearest && (!previous || squared < previous.separation ** 2)) nearest.set(route.id, candidate);
     };
     const column = Math.floor(x / cellSize), row = Math.floor(z / cellSize);
     for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) for (const index of grid.get(`${column + dx}:${row + dz}`) ?? []) consider(index);
     if (best > cellSize ** 2) for (let index = 0; index < segments.length; index++) consider(index);
     if (!result) throw new Error("The course has no usable road segments.");
+    if (nearest && maxSurfaceHeight !== undefined) {
+      // At a fork, a lower shortcut's closer centreline must not remove the deck under the kart.
+      let support: LayoutProjection | null = null;
+      for (const candidate of nearest.values()) {
+        if (candidate.separation > candidate.shoulderWidth || candidate.y > maxSurfaceHeight ||
+          candidate.routeId === "main" && isGap(candidate.u)) continue;
+        if (!support || candidate.y > support.y || candidate.y === support.y && candidate.separation < support.separation) support = candidate;
+      }
+      if (support) return support;
+    }
     return result;
   };
   const ground = (x: number, z: number) => layout.groundHeight(x * sign, z);

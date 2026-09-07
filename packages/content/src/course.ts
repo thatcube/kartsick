@@ -4,15 +4,22 @@ import {
 } from "./index";
 import type { RoadPoint, RoadProjection, SceneryCollider } from "./index";
 import type { CourseId } from "./catalog-types";
+import { AFTERGLOW } from "../../content-layouts/afterglow";
+import { ESCALUNA } from "../../content-layouts/escaluna";
+import { LASTLIGHT } from "../../content-layouts/lastlight";
+import { TILTGLASS } from "../../content-layouts/tiltglass";
+import { COPPERWHISTLE } from "../../content-layouts/copperwhistle";
+import { createLayoutQuery } from "../../content-layouts/query";
+import type { CourseLayout } from "../../content-layouts/types";
 export { advanceRoad, isLayoutQuery, roadFeatures } from "../../content-layouts/query";
 
 export const COURSES = [
   { id: "butterbell", name: "Butterbell Pastures", available: true, format: "laps", laps: 3 },
-  { id: "afterglow", name: "Afterglow Airway", available: false, format: "laps", laps: 3 },
-  { id: "escaluna", name: "Escaluna Galleria", available: false, format: "laps", laps: 3 },
-  { id: "tiltglass", name: "Tiltglass Arcade", available: false, format: "laps", laps: 3 },
-  { id: "copperwhistle", name: "Copperwhistle Canopy", available: false, format: "laps", laps: 3 },
-  { id: "lastlight", name: "Lastlight Switchbacks", available: false, format: "sectors", laps: 1 },
+  { id: "afterglow", name: "Afterglow Airway", available: true, format: "laps", laps: 3 },
+  { id: "escaluna", name: "Escaluna Galleria", available: true, format: "laps", laps: 3 },
+  { id: "tiltglass", name: "Tiltglass Arcade", available: true, format: "laps", laps: 3 },
+  { id: "copperwhistle", name: "Copperwhistle Canopy", available: true, format: "laps", laps: 3 },
+  { id: "lastlight", name: "Lastlight Switchbacks", available: true, format: "sectors", laps: 1 },
 ] as const;
 export const CUPS = [
   { id: "town", name: "Town Circuit", courses: ["butterbell", "escaluna", "tiltglass"] },
@@ -42,7 +49,7 @@ export interface CourseQuery {
   checkpoints: readonly RoadPoint[];
   colliders: readonly SceneryCollider[];
   sampleRoad(u: number): RoadPoint;
-  projectRoad(x: number, z: number): RoadProjection;
+  projectRoad(x: number, z: number, maxSurfaceHeight?: number): RoadProjection;
   surfaceHeight(x: number, z: number, road?: RoadProjection): number;
   terrainHeight(x: number, z: number): number;
   isWater(x: number, z: number): boolean;
@@ -69,9 +76,20 @@ export function nearbyFlight(course: CourseQuery, u: number, approach = 0) {
 }
 
 const cache: [CourseQuery | undefined, CourseQuery | undefined] = [undefined, undefined];
+const layouts: Record<Exclude<CourseId, "butterbell">, CourseLayout> = {
+  afterglow: AFTERGLOW, escaluna: ESCALUNA, tiltglass: TILTGLASS, copperwhistle: COPPERWHISTLE, lastlight: LASTLIGHT,
+};
+const layoutCache = new Map<string, CourseQuery>();
 /** Renderer and physics both reflect X (including normals/yaw), never reverse road progress. */
 export function getCourse(id: CourseId = "butterbell", mirror = false): CourseQuery {
-  if (id !== "butterbell") throw new RangeError("This course awaits the human-controller handling checkpoint; no substitute layout exists.");
+  if (id !== "butterbell") {
+    const layout = layouts[id];
+    if (!layout) throw new RangeError("This original course is still in production; no substitute layout exists.");
+    const key = `${id}:${mirror}`;
+    let query = layoutCache.get(key);
+    if (!query) { query = createLayoutQuery(layout, mirror); layoutCache.set(key, query); }
+    return query;
+  }
   const key = mirror ? 1 : 0;
   if (cache[key]) return cache[key]!;
   const sign = mirror ? -1 : 1;

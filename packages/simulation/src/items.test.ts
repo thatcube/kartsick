@@ -5,6 +5,8 @@ import {
   NEUTRAL_PLAYER, RACE_LIMITS, createRace, grantItem, parseRaceState, standings, stepRace,
 } from "./index";
 import type { PlayerInput, RaceEntry, RaceKart, RaceState, WorldEffect } from "./index";
+import { AFTERGLOW } from "../../content-layouts/afterglow";
+import { createLayoutQuery } from "../../content-layouts/query";
 
 const input = (edit: Partial<PlayerInput> = {}): PlayerInput => ({ ...NEUTRAL_PLAYER, ...edit });
 function setup(tandem = false): RaceState {
@@ -40,6 +42,47 @@ function touch(e: WorldEffect, victim: RaceKart): void {
 }
 
 describe("every approved item is usable, bounded and serializable", () => {
+  it.each(["bounce", "bomb"] as const)("%s cannot snap from terrain through an unreachable airport deck", item => {
+    const course = getCourse("afterglow"), point = course.sampleRoad(.125);
+    const race = createRace({
+      courseId: "afterglow", mode: "race", speedClass: 100, mirror: false, bots: false, difficulty: "normal", seed: 23,
+    }, [{ id: "a", name: "Driver", build: DEFAULT_BUILD, players: ["a", null] }]);
+    advance(race, 180);
+    Object.assign(race.karts[0].state, {
+      x: point.x, y: course.terrainHeight(point.x, point.z) + .42, z: point.z,
+      yaw: Math.atan2(point.dx, point.dz), roadU: point.u,
+    });
+    use(race, "a", item);
+    expect(race.items).toHaveLength(1);
+    expect(race.items[0].y).toBeLessThan(0);
+  });
+  it.each(["slip", "bounce", "bomb", "roadwork", "doubles"] as const)("%s stays on its reachable airport fork level", item => {
+    const course = createLayoutQuery(AFTERGLOW);
+    const main = createLayoutQuery({ ...AFTERGLOW, shortcuts: [] });
+    const point = course.routes[1].points.find(point => {
+      const deck = main.projectRoad(point.x, point.z);
+      return deck.separation < 2.5 && deck.y > point.y + 1.7;
+    })!;
+    expect(point).toBeDefined();
+    const deck = main.projectRoad(point.x, point.z);
+    for (const upper of [false, true]) {
+      const race = createRace({
+        courseId: "afterglow", mode: "race", speedClass: 100, mirror: false, bots: false, difficulty: "normal", seed: 23,
+      }, [{ id: "a", name: "Driver", build: DEFAULT_BUILD, players: ["a", null] }]);
+      advance(race, 180);
+      const surface = upper ? deck : point;
+      Object.assign(race.karts[0].state, {
+        x: point.x, y: surface.y + .42, z: point.z, roadU: surface.u,
+        yaw: Math.atan2(surface.dx, surface.dz), vx: 0, vz: 0, vy: 0, speed: 0, mode: "ground",
+      });
+      use(race, "a", item);
+      expect(race.items.length).toBeGreaterThan(0);
+      for (const effect of race.items) {
+        if (upper) expect(effect.y).toBeGreaterThan((deck.y + point.y) / 2);
+        else expect(effect.y).toBeLessThan((deck.y + point.y) / 2);
+      }
+    }
+  });
   it.each(ITEM_IDS)("%s has a real effect and consumes one owned charge", item => {
     const race = setup();
     const events = use(race, "a", item);

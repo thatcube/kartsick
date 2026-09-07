@@ -207,7 +207,8 @@ describe("race authority, bots, time trials and bounds", () => {
     expect(createRace(OPTIONS, sixteen).karts).toHaveLength(8);
     expect(() => createRace(OPTIONS, [...sixteen, entry("extra")])).toThrow();
     expect(() => createRace(OPTIONS, [entry("a", ["p", "p"])])).toThrow();
-    expect(() => createRace({ ...OPTIONS, courseId: "afterglow" }, [entry()])).toThrow();
+    // @ts-expect-error Deliberately exercise the runtime boundary with an unknown course.
+    expect(() => createRace({ ...OPTIONS, courseId: "unknown-course" }, [entry()])).toThrow();
     const race = createRace(OPTIONS, [entry(), entry("b")]);
     expect(() => setRacePlayers(race, "b", ["a", null])).toThrow();
   });
@@ -249,7 +250,7 @@ describe("race authority, bots, time trials and bounds", () => {
       s => { s.karts[0].state.lapTimes = Array(100).fill(1); },
       s => { s.karts[0].previous[0].throttle = 2; }, s => { s.karts[0].players = ["a", "a"]; },
       s => { s.karts[0].state.nextCheckpoint = 200; }, s => { s.karts[0].state.finished = true; },
-      s => { s.results = Array(20).fill({}); }, s => { s.options.courseId = "lastlight"; },
+      s => { s.results = Array(20).fill({}); }, s => { Object.assign(s.options, { courseId: "unknown-course" }); },
       s => { (s as unknown as Record<string, unknown>).unexpected = []; },
     ];
     for (const mutate of mutations) { const s = copyRace(base); mutate(s); expect(parseRaceState(s)).toBeNull(); }

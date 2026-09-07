@@ -2,7 +2,7 @@
 
 The authoritative engine is independent of DOM, Babylon, transport and storage.
 Its state is plain bounded data. It implements the approved shared racing
-systems on the **actual Butterbell study course**, not substitute tracks.
+systems on the actual registered original courses, not substitute tracks.
 
 The public `src/index.ts` is a re-export-only barrel. Shared driving code lives
 in `src/physics.ts`; the race implementation imports physics directly rather
@@ -10,15 +10,21 @@ than importing its own public barrel. Initialization does not depend on whether
 the consumer loads the race, physics or public entry point first.
 
 The working foundation has passed its expansion feedback checkpoint, while
-handling and presentation still need substantial refinement. The five additional
-courses are in production. The engine now supports nonuniform checkpoints,
+handling and presentation still need substantial refinement. Butterbell,
+Afterglow, Escaluna, Tiltglass, Copperwhistle and Lastlight are connected.
+The engine supports nonuniform checkpoints,
 shortcut-specific surfaces, moving course hazards, multiple flight zones and
 open three-sector descents; a course remains unavailable until its own geometry
 is connected. No cup is completed by repeating Butterbell.
 
-Circuit scoring and the local round/results flow are implemented but remain
-unavailable to start until all of a circuit's original courses are connected.
-Online circuit checkpoint integration is still in progress.
+Circuit scoring and the local round/results flow use each original schedule.
+Online rooms use the same scoring and schedules, accepting a completed round
+only against the authority's committed terminal checkpoint.
+
+Bots follow the selected road in metres rather than fixed fractions of its
+control-point parameter. Glider guidance uses the actual landing height and
+the same vertical-response constants as manual physics. These are bot/temporary
+autopilot-item controls, not steering or acceleration assists for human drivers.
 
 ## Integration API
 
@@ -278,7 +284,9 @@ tradeoffs; character appearances and cosmetics do not change physics.
 `tuningForBuild(build, speedClass)` maps those stats into actual acceleration,
 speed, road/drift grip, steering, rough-surface maximum, flight speed/lift/turn,
 stall/landing envelope and mini-turbo duration. Collision response uses combined
-weight. All 192 combinations can complete Butterbell in the targeted tests.
+weight. The exhaustive driving matrix completes all 192 combinations on every
+course, at every class and in both orientations, without supplied progress or
+recovery.
 
 `stepKart(state, input, {course?, tuning?, countersteer?})` preserves two-argument
 legacy calls. Supplying `countersteer` opts into the rear-controlled co-op
@@ -294,7 +302,7 @@ X, yaw sign and lateral sign. Progress `u` is unchanged. The renderer must
 reflect the same world rather than reverse track traversal.
 
 `COURSES`, `CUPS`, and `availableSeries` expose the approved full identities and
-schedules honestly. `getCourse` rejects the unbuilt five. Time trial creates one
+schedules honestly. All six have their own connected geometry. Time trial creates one
 kart, no random boxes and exactly two initial boosts, using identical physics.
 
 ### Circuit results
@@ -303,6 +311,10 @@ kart, no random boxes and exactly two initial boosts, using identical physics.
 progress. `nextSeriesCourse` returns the actual next course, or null after the
 last round. `appendSeriesRound` accepts only a completely validated finished
 race on that next course; it rejects duplicate/reordered rounds and time trials.
+`appendSeriesResults` is the bounded metadata counterpart used by signaling,
+after its epoch, roster and committed-checkpoint validation. It does not attest
+to physics itself. `series-metadata.ts` deliberately avoids loading the renderer
+or simulation runtime into the signaling protocol.
 `parseSeries` restores an independent copy with at most six rounds and eight
 distinct kart IDs. It checks the schedule, result positions, point values and
 complete/incomplete times without substituting other courses.
@@ -324,12 +336,12 @@ npx vitest run packages/content packages/simulation
 
 Coverage includes all item IDs, actual effects/expiry/counters, signature
 bypasses, cooperative ownership/swaps/stealing/counters, speed/part tradeoffs,
-all 192 build combinations completing actual Butterbell, mirrored physics and
-50/150 bot runs, eight-bot and sixteen-owner races/results, ordered checkpoints,
+all 6,912 course/class/mirror/build combinations in the opt-in exhaustive matrix,
+representative default driving cases, eight-bot and sixteen-owner races/results, ordered checkpoints,
 time-trial allowance, snapshot roundtrips/rejection and capacity guards.
 
 This is shared simulation evidence, not approval of physical-controller
 handling, final production visuals/audio, real-network migration/performance,
-the five gated track layouts, completed cups/tour or billable relay. Those remain
+maximum-occupancy browser circuits or billable relay. Those remain
 separate integration/release requirements. No assets, guides or game code were
 copied into this package; the reference inspection images were removed.

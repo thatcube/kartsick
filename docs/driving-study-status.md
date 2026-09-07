@@ -65,6 +65,51 @@ browser scenarios also pass against the refactored shared renderer.
 These are functional observations, not human handling approval or native-GPU
 performance certification.
 
+## Authored course expansion
+
+All six original courses are connected to the actual simulation and renderer:
+Butterbell, Afterglow, Escaluna, Tiltglass, Copperwhistle and Lastlight.
+The five closed courses are
+three-lap loops; Lastlight is a roughly 4.5 km continuous descent with two
+interior sector gates and one finish. Shortcut support, scenery collisions
+and moving hazards use the same course definitions as their visible worlds.
+
+Browser coverage selects and drives registered worlds in normal and mirror
+mode, returns to Butterbell repeatedly, and checks that vertices, textures and
+materials do not accumulate across course changes. This exposed and corrected
+reversed terrain/road winding, which geometry-finiteness checks alone missed.
+A complete synthetic-controller Lastlight drive crosses every required gate,
+glides, lands, and records exactly three sectors with no recovery or supplied
+progress. An existing full Butterbell trial still records and replays its ghost.
+The expanded six-course normal/mirror pass and a complete Lastlight descent now
+pass in the actual browser. Browser test servers disable hot reload and isolate
+their dependency caches, so unrelated preview edits cannot restart a run or
+invalidate its lazy shader imports.
+
+Long-course driving also exposed two bot assumptions: fixed parameter-fraction
+lookahead became excessive on the mountain, and fixed glide pitch landed beyond
+the straight landing zone. Road guidance now uses metres; altitude guidance
+solves the shared glider's vertical response for the real landing, then follows
+the descending road rather than trying to regain an already-passed landing height.
+The galleria's landing was lowered to remain reachable with a fast, low-lift
+canopy at 50cc. Height-aware support at overlapping main/shortcut forks prevents
+falling through an elevated deck or snapping up from a lower shortcut. These
+are intentional geometry/support fixes; manual control response values are unchanged.
+
+All 108 representative course/class/mirror/build driving cases complete their
+real ordered gates and finish without recovery. The exhaustive single-kart
+time-trial matrix also completes all 6,912 combinations: six courses, three
+classes, both orientations and all 192 body/wheel/glider builds. It neither
+grants checkpoints nor applies recovery. This exposed high-lift 150cc landings
+that needed continued descent guidance and earlier air-turn anticipation.
+It does not certify multiplayer item traffic, physical controllers or GPU performance.
+
+Six distinct original synthesized course arrangements are authored, with
+course selection wired into local and online race loading, a paddock arrangement,
+bar-aligned transitions and Lastlight sector changes. Mocked Web Audio coverage
+exercises scheduling, voice bounds, interaction cues and lifecycle disposal.
+This is not listening approval or final audio production certification.
+
 ## Integrated direct-online racing
 
 The main menu now includes room creation and invite-link/code joining, up to
@@ -84,8 +129,30 @@ forced-relay, all-browser or maximum-human compatibility.
 
 The first eight-kart sample reached 14,694 bytes for an uncompressed full-state
 snapshot, before envelope overhead. It is a measurement from one local scenario,
-not a sustained bandwidth or relay-cost guarantee. Compression and representative
-maximum-occupancy traffic remain release work.
+not a sustained bandwidth or relay-cost guarantee. Explicitly negotiated
+lossless compression now reduces representative full snapshots and checkpoints
+without changing simulation data. See the networking document for measured
+payloads and bounds; representative maximum-occupancy real-browser traffic
+remains release work.
+
+Protocol version 3 adds accepted terminal results and online cup/tour progression.
+Completion references a committed checkpoint and a frozen started roster.
+The next course returns to readiness with the same kart-slot points; the room
+cannot silently change a running circuit's rules. Accepted finished checkpoints
+remain eligible for host recovery beyond the active-race freshness window.
+Late arrivals can read saved standings without inventing a finished simulation
+or incrementing their local played-race count. Targeted server/transport/session
+coverage and existing actual online driving/migration scenarios pass.
+A naturally driven online Town circuit also completes Butterbell, Escaluna and
+Tiltglass. Its finished state survives signaling reconnection and a host
+departure after the five-second active-checkpoint window, then a second departure after a late spectator has
+received the checkpoint. That spectator restores the exact finished state,
+continues through real readiness lobbies after reservations expire, and earns
+the final kart-slot medal. Its local race count increases only for the two
+rounds it participated in, not for the earlier scoreboard-only arrival.
+The six current transport scenarios also pass, including sixteen synthetic
+input owners across eight tandem slots. That is transport occupancy evidence,
+not sixteen-person rendered gameplay or remote-network certification.
 
 ## Recorded automated coverage
 
@@ -122,6 +189,9 @@ unavailable hardware:
   distance at speed. The browser-native test pilot keeps updating ordinary
   gamepad inputs during screenshot capture; it never writes simulation state
   and is not part of the production bundle.
+- Production output excludes both read-only diagnostic globals and the browser
+  pilots. The development study retains its keyboard/controller diagnostic
+  coverage behind Vite's development-only gate.
 
 Current development environment: Apple M4 Max, macOS 26.6.2, Node.js 26.7.0.
 Automated browser engine: Chromium Headless Shell 153.0.8010.12, via the
@@ -147,9 +217,9 @@ impression, and glide control/landing. Physical Xbox, PlayStation, Switch Pro,
 and adapter coverage is still open. Synthetic gamepad tests are not substituted
 for that evidence.
 
-Only Butterbell is playable. Remaining release work includes safe relay activation,
-real cross-network testing, the other five courses and cup/tour flows, broader
-audio/art production and compressed loading, broader migration/reconnection evidence,
+All six courses are playable. Remaining release work includes safe relay activation,
+real cross-network testing, complete cup/tour browser evidence,
+audio/art refinement and compressed loading, broader migration/reconnection evidence,
 target-occupancy performance, and public deployment. The local core and complete
 roster now exist, but that does not establish their final balance, production
 quality, physical-controller compatibility or network acceptance.

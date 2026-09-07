@@ -133,7 +133,7 @@ function App(): React.JSX.Element {
         },
       });
       runtime.current = game;
-      window.__KARTSICK_DIAGNOSTICS__ = { read: () => game!.snapshot() };
+      if (import.meta.env.DEV) window.__KARTSICK_DIAGNOSTICS__ = { read: () => game!.snapshot() };
       void game.ready().catch(error => {
         if (!cancelled) {
           setFailure(error instanceof Error ? error.message : String(error));
@@ -148,7 +148,7 @@ function App(): React.JSX.Element {
       cancelled = true;
       game?.dispose();
       runtime.current = null;
-      delete window.__KARTSICK_DIAGNOSTICS__;
+      if (import.meta.env.DEV) delete window.__KARTSICK_DIAGNOSTICS__;
     };
   }, []);
 

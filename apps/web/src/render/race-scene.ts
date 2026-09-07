@@ -45,6 +45,7 @@ export class RaceScene {
   private time = 0;
   private mirror = false;
   private settings: Settings;
+  get courseId(): CourseId { return this.stage.courseId; }
 
   constructor(canvas: HTMLCanvasElement, settings: Settings) {
     this.settings = settings;

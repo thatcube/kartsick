@@ -11,7 +11,7 @@ import type { SessionFrame } from "./local-race";
 export type RacingTransport = Pick<KartsickNetwork<RaceState, RaceEvent[]>,
   "room" | "participantId" | "isAuthority" | "connectedPeers" | "subscribe" | "sendInputs" |
   "drainInputs" | "pendingInputs" | "broadcastSnapshot" | "broadcastEvent" | "commitCheckpoint" | "getSnapshotAcks"> & {
-    connection: Pick<KartsickNetwork<RaceState>["connection"], "connected" | "serverNow">;
+    connection: Pick<KartsickNetwork<RaceState>["connection"], "connected" | "serverNow" | "finishRound">;
   };
 
 export function decodeRaceEventBatch(value: unknown): RaceEvent[] {
@@ -28,14 +28,16 @@ export function decodeRaceEventBatch(value: unknown): RaceEvent[] {
 }
 
 export function roomRace(room: Room): RaceState {
-  if (!room.karts.some(kart => kart.seats.some(Boolean))) throw new RangeError("The room has no seated racers.");
+  if (!room.round && !room.karts.some(kart => kart.seats.some(Boolean))) throw new RangeError("The room has no seated racers.");
   const names = new Map(room.participants.flatMap(participant => participant.players.map(player => [player.id, player.name] as const)));
   const entries: RaceEntry[] = room.karts.flatMap((kart, index) => {
-    if (!room.config.bots && kart.seats.every(player => player === null)) return [];
+    const id = `online-kart-${index + 1}`;
+    const frozen = room.round?.roster.find(racer => racer.id === id);
+    if (room.round ? !frozen : !room.config.bots && kart.seats.every(player => player === null)) return [];
     const humans = kart.seats.flatMap(player => player ? [names.get(player) ?? "Disconnected racer"] : []);
     const entry: RaceEntry = {
-      id: `online-kart-${index + 1}`,
-      name: (humans.length ? humans.join(" & ") : `${CHARACTERS.find(character => character.id === kart.build.characters[0])!.name} & co.`).slice(0, 32),
+      id,
+      name: frozen?.name ?? (humans.length ? humans.join(" & ") : `${CHARACTERS.find(character => character.id === kart.build.characters[0])!.name} & co.`).slice(0, 32),
       build: kart.build, players: [...kart.seats],
     };
     return [entry];
@@ -64,6 +66,10 @@ export class OnlineRaceSession {
   private checkpointInFlight = false;
   private checkpointTick = -60;
   private checkpointRetryAt = 0;
+  private finishInFlight = false;
+  private finishRetryAt = 0;
+  private finishAcknowledged = false;
+  private readonly roundId: string;
   private publishedSequence: number | null = null;
   private lastPublishedAt = 0;
   private resumeAt = 0;
@@ -90,14 +96,29 @@ export class OnlineRaceSession {
     readonly identities: ReadonlyMap<string, string>,
     private readonly warning: (message: string) => void,
     private readonly now: () => number = () => performance.now(),
+    terminal?: Checkpoint<RaceState>,
   ) {
     const room = network.room;
-    if (!room || room.phase === "lobby") throw new RangeError("An online race requires a running room.");
-    this.race = roomRace(room);
+    if (!room || room.phase === "lobby" || !room.round) throw new RangeError("An online race requires a started room round.");
+    if (terminal) {
+      if (terminal.state.phase !== "finished" || terminal.state.tick !== terminal.reference.tick ||
+        terminal.reference.id !== room.lastRound?.checkpoint.id || terminal.reference.digest !== room.lastRound.checkpoint.digest ||
+        terminal.reference.tick !== room.lastRound.checkpoint.tick || room.lastRound.roundId !== room.round.id ||
+        JSON.stringify(terminal.state.results) !== JSON.stringify(room.lastRound.results) ||
+        terminal.state.options.seed !== room.seed || terminal.state.options.courseId !== room.config.course ||
+        terminal.state.options.speedClass !== room.config.speed || terminal.state.options.mirror !== room.config.mirror)
+        throw new RangeError("Only the accepted terminal checkpoint can restore completed race positions.");
+      this.race = copyRace(terminal.state);
+    } else {
+      if (room.phase === "results") throw new RangeError("Completed rooms must not create a fresh race.");
+      this.race = roomRace(room);
+    }
+    this.roundId = room.round.id;
     this.epoch = room.epoch;
     this.waiting = !network.isAuthority;
     this.remember();
     this.unsubscribe = network.subscribe(event => this.receive(event));
+    if (terminal) this.restore(terminal);
   }
 
   get droppedSeconds(): number { return this.clock.droppedSeconds; }
@@ -115,6 +136,7 @@ export class OnlineRaceSession {
     if (!this.network.connection.connected) return "SIGNALING RECONNECTING - RACE HELD";
     if (room?.phase === "migrating") return "RESTORING RACE WITH A NEW HOST";
     if (room?.phase === "paused") return "ROOM PAUSED";
+    if (room?.phase === "results") return "RESULTS SAVED TO ROOM";
     if (this.waiting) return "WAITING FOR THE RACE HOST";
     return `DIRECT ONLINE${this.network.isAuthority ? " / HOST" : ""}${this.rtt ? ` / ${Math.round(this.rtt)} MS` : ""}`;
   }
@@ -153,6 +175,7 @@ export class OnlineRaceSession {
           this.latestSnapshot = null;
           this.publishedSequence = null;
           this.checkpointRetryAt = 0;
+          this.finishAcknowledged = false;
           this.remoteSamples = [];
           this.peerQuality.clear();
           this.rtt = 0;
@@ -161,7 +184,8 @@ export class OnlineRaceSession {
           if (event.checkpoint && event.authorityId !== this.network.participantId) this.restore(event.checkpoint);
         }
         this.resetClock();
-        if (event.phase !== "racing") this.waiting = true;
+        if (event.phase === "results") { this.waiting = !this.finished; this.awaitingResumeTime = false; this.resumeAt = 0; }
+        else if (event.phase !== "racing") this.waiting = true;
         else {
           if (this.awaitingResumeTime) {
             const startAt = this.network.room?.startAt;
@@ -172,7 +196,11 @@ export class OnlineRaceSession {
         }
         break;
       case "room":
-        if (this.network.isAuthority) this.syncSeats();
+        if (this.network.isAuthority && this.race.phase !== "finished") this.syncSeats();
+        this.finishRound();
+        break;
+      case "checkpoint":
+        this.finishRound();
         break;
       case "signaling":
         if (event.status !== "connected") { this.waiting = true; this.resetClock(); }
@@ -258,8 +286,8 @@ export class OnlineRaceSession {
     this.remoteSamples = [];
     this.checkpointTick = this.race.tick;
     this.confirmedFinished = this.race.phase === "finished";
-    this.resumeAt = this.network.connection.serverNow() + 1000;
-    this.awaitingResumeTime = true;
+    this.resumeAt = this.confirmedFinished ? 0 : this.network.connection.serverNow() + 1000;
+    this.awaitingResumeTime = !this.confirmedFinished;
     this.resetClock();
   }
 
@@ -331,6 +359,7 @@ export class OnlineRaceSession {
     this.checkpointInFlight = true;
     const epoch = this.epoch;
     void this.network.commitCheckpoint(copyRace(this.race), this.race.tick, this.acknowledgments())
+      .then(() => this.finishRound())
       .catch(error => {
         if (!this.disposed && this.epoch === epoch) {
           this.checkpointTick = -60;
@@ -339,6 +368,27 @@ export class OnlineRaceSession {
         }
       })
       .finally(() => { this.checkpointInFlight = false; });
+  }
+
+  private finishRound(): void {
+    const room = this.network.room, checkpoint = room?.checkpoint;
+    if (this.disposed || this.finishInFlight || this.finishAcknowledged || this.now() < this.finishRetryAt || !this.network.isAuthority ||
+      room?.phase !== "racing" || room.round?.id !== this.roundId || this.race.phase !== "finished" ||
+      checkpoint?.tick !== this.race.tick) return;
+    const epoch = this.epoch;
+    this.finishInFlight = true;
+    void this.network.connection.finishRound({
+      epoch, roundId: this.roundId, courseId: this.race.options.courseId,
+      checkpointId: checkpoint.id, tick: checkpoint.tick, results: structuredClone(this.race.results),
+    }).then(() => {
+      if (!this.disposed && this.epoch === epoch) this.finishAcknowledged = true;
+    }).catch(error => {
+      if (!this.disposed && this.epoch === epoch && this.network.room?.round?.id === this.roundId &&
+        this.network.room.phase === "racing") {
+        this.finishRetryAt = this.now() + 1000;
+        this.warning(`Room results could not be saved: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }).finally(() => { this.finishInFlight = false; });
   }
 
   private remotePoses(): SessionFrame["remote"] {
@@ -374,7 +424,7 @@ export class OnlineRaceSession {
 
   advance(elapsed: number, localInputs: Readonly<Record<string, PlayerInput>>, _onStep?: (race: RaceState) => void): SessionFrame {
     const room = this.network.room;
-    if (this.disposed || !room || room.phase !== "racing" || !this.network.connection.connected ||
+    if (this.disposed || !room || (room.phase !== "racing" && room.phase !== "results") || !this.network.connection.connected ||
       this.network.connection.serverNow() < this.resumeAt) { this.resetClock(); return this.paused(); }
     if (this.race.phase === "finished" && this.finished) {
       this.resetClock();
@@ -384,11 +434,13 @@ export class OnlineRaceSession {
           if (this.publishedSequence === null || this.network.connectedPeers.some(id =>
             !acks.has(id) || sequenceIsNewer(this.publishedSequence!, acks.get(id)!))) this.publish();
         }
-        this.publishCheckpoint();
+        if (room.phase === "racing") { this.publishCheckpoint(); this.finishRound(); }
       }
       return this.takeFrame(1);
     }
+    if (room.phase === "results") { this.resetClock(); return this.paused(); }
     const alpha = this.clock.advance(elapsed * (this.network.isAuthority ? 1 : this.predictionScale), () => {
+      if (this.finished) return;
       const seated = new Set(this.race.karts.flatMap(kart => kart.players));
       const samples = [...this.identities].flatMap(([local, playerId]) => seated.has(playerId) && localInputs[local] ? [{
         playerId, tick: this.race.tick + 1, input: localInputs[local],

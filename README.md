@@ -23,10 +23,14 @@ npm ci
 npm run dev
 ```
 
-Open <http://127.0.0.1:4173>. The main game includes Butterbell races against
-bots, standard items and signature specials, all eight characters and
+Open <http://127.0.0.1:4173>. Race on Butterbell Pastures, Afterglow Airway,
+Escaluna Galleria, Tiltglass Arcade, Copperwhistle Canopy, or the continuous
+three-sector Lastlight Switchbacks descent.
+The main game includes bots, standard items and signature specials, all eight characters and
 customizable parts, manual driving and countersteer mini-turbos, gliding,
-three-lap results and rematches, and solo time trials with saved racing ghosts.
+results and rematches, and solo time trials with saved racing ghosts.
+Each course has its own original synthesized arrangement; Lastlight's music
+changes through its three sectors.
 
 **Controller is the primary target:** left stick, triggers to accelerate/brake, right shoulder to drift,
 north face to swap, left shoulder to use items, Select/View to pass items,
@@ -62,8 +66,13 @@ The retained single-kart study is at <http://127.0.0.1:4173/?study>. The earlier
 keyboard feedback established functionality, not controller handling approval.
 The subsequent controller checkpoint accepted the working basis for expansion,
 while explicitly leaving substantial refinement in every area.
-The other five courses, cups and tour remain in production, not locked behind
-medals. No public deployment or working relay is claimed.
+All six courses are connected. Local cups and the tour use their original
+schedules; no repeated-course substitutes or progression locks are used.
+Online rooms also support both cups and the tour, with cumulative kart-slot
+points, ready-up between courses and retained final results. A complete online
+Town circuit has been driven through two host departures, including recovery
+by a late-arriving spectator and continuation to the final medal.
+No public deployment or working relay is claimed.
 
 ## Development commands
 
@@ -82,6 +91,9 @@ to `dist/`; the largest current file is below the static host's per-file limit.
 An independent test invocation can choose a different free port with
 `KARTSICK_TEST_PORT=4175`; use a separate Playwright `--output` directory as well
 so ownership records and artifacts do not overwrite another run.
+Vite's configuration runner resolves the local signaling service's workspace
+TypeScript imports. Browser runs also use separate per-port dependency caches,
+so the interactive preview cannot invalidate their lazily loaded shaders.
 
 Simulation, content, and protocol are separate TypeScript packages. React owns
 menus and occasional lifecycle transitions, not the fixed 60 Hz simulation.

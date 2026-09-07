@@ -19,7 +19,8 @@ export default defineConfig({
     screenshot: "only-on-failure",
   },
   webServer: {
-    command: `node node_modules/vite/bin/vite.js --config apps/web/vite.config.ts --host 127.0.0.1 --port ${port} --strictPort`,
+    env: { KARTSICK_BROWSER_TEST: "1" },
+    command: `node node_modules/vite/bin/vite.js --config apps/web/vite.config.ts --configLoader runner --host 127.0.0.1 --port ${port} --strictPort`,
     url: origin,
     reuseExistingServer: false,
     timeout: 30_000,

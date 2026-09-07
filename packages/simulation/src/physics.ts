@@ -4,6 +4,7 @@ import {
 import type { CourseQuery, KartBuild, RoadProjection } from "@kartsick/content";
 
 export const STEP = 1 / 60;
+export const GLIDE_DYNAMICS = Object.freeze({ gravity: 4.6, pitchAuthority: 3.1, response: 1.7 });
 export const TUNING = {
   topSpeed: 28, boostSpeed: 37, acceleration: 12, braking: 23,
   roadGrip: 7.8, driftGrip: 2.1, driftMinimum: 8,
@@ -288,7 +289,7 @@ export function stepKart(state: KartState, input: DriverInput, options: StepKart
   const steer = clamp(input.steer, -1, 1);
   const throttle = clamp(input.throttle, 0, 1);
   const brake = clamp(input.brake, 0, 1);
-  const roadBefore = course.projectRoad(state.x, state.z);
+  const roadBefore = course.projectRoad(state.x, state.z, state.y + 0.8);
   const oldX = state.x;
   const oldZ = state.z;
   const oldY = state.y;
@@ -355,7 +356,7 @@ export function stepKart(state: KartState, input: DriverInput, options: StepKart
     state.vx = lerp(state.vx, Math.sin(state.yaw) * airspeed, 3 * STEP);
     state.vz = lerp(state.vz, Math.cos(state.yaw) * airspeed, 3 * STEP);
     if (state.mode === "glider" && airspeed > 12 / tuning.glideLift) {
-      state.vy += (-4.6 / tuning.glideLift + pitch * 3.1 - state.vy) * 1.7 * STEP;
+      state.vy += (-GLIDE_DYNAMICS.gravity / tuning.glideLift + pitch * GLIDE_DYNAMICS.pitchAuthority - state.vy) * GLIDE_DYNAMICS.response * STEP;
     } else {
       state.vy -= 9.81 * STEP;
     }
@@ -366,7 +367,7 @@ export function stepKart(state: KartState, input: DriverInput, options: StepKart
   state.z += state.vz * STEP;
   sceneryCollision(state, events, course);
   courseHazards(state, events, course, options.time ?? state.tick * STEP);
-  const road = course.projectRoad(state.x, state.z);
+  const road = course.projectRoad(state.x, state.z, oldY + 0.8);
   const features = roadFeatures(course, road);
   state.offRoad = road.separation > features.shoulderWidth || features.gap || features.rough;
   const deck = course.surfaceHeight(state.x, state.z, road);

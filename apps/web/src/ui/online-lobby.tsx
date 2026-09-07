@@ -1,10 +1,11 @@
 import React, { useState } from "react";
-import { BODIES, CHARACTERS, COURSES } from "@kartsick/content";
+import { BODIES, CHARACTERS, COURSES, CUPS, availableSeries } from "@kartsick/content";
 import type { KartBuild } from "@kartsick/content";
 import type { Room } from "@kartsick/protocol";
 import type { LocalPlayer } from "../local-input";
 import type { useOnlineRoom } from "../use-online-room";
 import { Choice, Toggle } from "./menu-controls";
+import { CircuitStandings, type RaceProgram } from "./race-setup";
 
 export function OnlineLobby({ online, players, build, garage, controls, capture, keyboard, addPlayer, back }: {
   online: ReturnType<typeof useOnlineRoom>; players: readonly LocalPlayer[]; build: (id: string) => KartBuild;
@@ -21,6 +22,8 @@ export function OnlineLobby({ online, players, build, garage, controls, capture,
   const playerId = identities.get(id);
   const host = room?.hostId === network?.participantId;
   const lobby = room?.phase === "lobby";
+  const program: Exclude<RaceProgram, "time-trial"> = room?.config.mode === "tour" ? "tour" :
+    room?.config.mode === "cup" ? room.config.cup : "quick";
   const member = room?.participants.find(participant => participant.id === network?.participantId);
   const allPlayers = room?.participants.flatMap(participant => participant.players) ?? [];
   const seated = member?.players.filter(player => room?.karts.some(kart => kart.seats.includes(player.id))) ?? [];
@@ -88,24 +91,33 @@ export function OnlineLobby({ online, players, build, garage, controls, capture,
           }}>Change this kart</button>}
         </article>;
       })}</div>
-      {host && lobby ? <div className="room-rules">
-        <Choice label="Course" value={room.config.course} options={COURSES.filter(course => course.available).map(course => ({ value: course.id, label: course.name }))}
-          change={course => configure({ course })} />
+      {room.series && <CircuitStandings series={room.series} ownKarts={online.ownKartIds()} />}
+      {host && lobby && !room.series ? <div className="room-rules">
+        <Choice<Exclude<RaceProgram, "time-trial">> label="Program" value={program}
+          options={[{ value: "quick", label: "Single race" }, ...CUPS.filter(cup => availableSeries(cup.courses)).map(cup => ({ value: cup.id, label: cup.name }))]}
+          change={next => {
+            if (next === "quick") configure({ mode: "quick" });
+            else configure({ mode: next === "tour" ? "tour" : "cup", cup: next === "horizon" ? "horizon" : "town",
+              course: CUPS.find(cup => cup.id === next)!.courses[0] });
+          }} />
+        {program === "quick" ? <Choice label="Course" value={room.config.course} options={COURSES.filter(course => course.available).map(course => ({ value: course.id, label: course.name }))}
+          change={course => configure({ course })} /> :
+          <p className="panel-note">{CUPS.find(cup => cup.id === program)!.courses.map(id => COURSES.find(course => course.id === id)!.name).join(" / ")}</p>}
         <Choice label="Class" value={room.config.speed} options={[{ value: 50, label: "50" }, { value: 100, label: "100" }, { value: 150, label: "150" }]} change={speed => configure({ speed })} />
         <Toggle label="Mirror" value={room.config.mirror} change={mirror => configure({ mirror })} />
         <Toggle label="Fill empty karts with bots" value={room.config.bots} change={bots => configure({ bots })} />
         {room.config.bots && <Choice label="Bot difficulty" value={room.config.difficulty} options={[{ value: "easy", label: "Easy" }, { value: "normal", label: "Normal" }, { value: "hard", label: "Hard" }]} change={difficulty => configure({ difficulty })} />}
-      </div> : <p className="panel-note">{COURSES.find(course => course.id === room.config.course)?.name} / {room.config.speed} / {room.config.mirror ? "Mirror" : "Normal"}. {lobby ? "The host chooses the race." : "Late arrivals spectate until the next race."}</p>}
+      </div> : <p className="panel-note">{COURSES.find(course => course.id === room.config.course)?.name} / {room.config.speed} / {room.config.mirror ? "Mirror" : "Normal"}. {room.series ? "Circuit rules stay fixed. Points belong to kart slots; new arrivals may join a slot for the next course." : lobby ? "The host chooses the race." : "Late arrivals spectate until the next race."}</p>}
       <div className="room-start">
         <button data-pad className="game-primary" disabled={online.busy || !lobby || !seated.length} onClick={() => void online.toggleReady()}>{ready ? "Not ready" : "Ready to race"}</button>
         {host && <button data-pad className="game-primary" disabled={online.busy || !lobby || !allReady} onClick={() => void online.operation(async () => {
           if (!network) throw new Error("The room is disconnected.");
           await network.connection.start();
         })}>Start race</button>}
-        {host && !lobby && <button data-pad onClick={() => void online.operation(async () => {
+        {host && (!lobby || room.series) && <button data-pad disabled={online.busy} onClick={() => void online.operation(async () => {
           if (!network) throw new Error("The room is disconnected.");
           await network.connection.returnToLobby();
-        })}>Return everyone to the room</button>}
+        })}>{room.series ? "End circuit and change rules" : "Return everyone to the room"}</button>}
         <button data-pad disabled={online.busy} onClick={() => network?.retryConnections()}>Retry connection</button>
       </div>
     </>}

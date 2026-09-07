@@ -217,6 +217,10 @@ export class RoomConnection {
   start(): Promise<void> { return this.request({ type: "start" }); }
   returnToLobby(): Promise<void> { return this.request({ type: "return" }); }
   rematch(): Promise<void> { return this.request({ type: "rematch" }); }
+  finishRound(command: Omit<Extract<RoomCommand, { type: "finish" }>, "type">): Promise<void> {
+    return this.request({ type: "finish", ...command });
+  }
+  nextCourse(epoch: number, roundId: string): Promise<void> { return this.request({ type: "next-course", epoch, roundId }); }
   setCapability(capability: Capability): Promise<void> { this.capability = capability; return this.request({ type: "capability", capability }); }
   /** Exercise an ordinary signaling reconnect without giving up the 60-second reservation. */
   reconnect(): void { this.socket?.close(1000, "Reconnecting."); }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { advanceRoad, createLayoutQuery, roadFeatures, sampleCurve } from "./query";
 import type { CourseLayout, Point3 } from "./types";
+import { AFTERGLOW } from "./afterglow";
 
 const points: readonly Point3[] = [[-50, 2, -50], [50, 2, -50], [50, 2, 50], [-50, 2, 50]];
 function fixture(): CourseLayout {
@@ -14,6 +15,24 @@ function fixture(): CourseLayout {
   };
 }
 describe("generalized course geometry", () => {
+  it.each([false, true])("keeps the airport deck above its lower shortcut without snapping through it (mirror %s)", mirror => {
+    const course = createLayoutQuery(AFTERGLOW, mirror);
+    const main = createLayoutQuery({ ...AFTERGLOW, shortcuts: [] }, mirror);
+    const point = course.routes[1].points.find(point => {
+      const deck = main.projectRoad(point.x, point.z);
+      return deck.separation < deck.shoulderWidth && deck.y > point.y + 1;
+    })!;
+    expect(point).toBeDefined();
+    const deck = main.projectRoad(point.x, point.z);
+    expect(course.projectRoad(point.x, point.z).routeId).toBe("low-return");
+    const upper = course.projectRoad(point.x, point.z, deck.y + .8);
+    expect(upper.routeId).toBe("main");
+    expect(course.surfaceHeight(point.x, point.z, upper)).toBeCloseTo(deck.y);
+    const lower = course.projectRoad(point.x, point.z, point.y + .3);
+    expect(lower.routeId).toBe("low-return");
+    expect(course.surfaceHeight(point.x, point.z, lower)).toBeCloseTo(point.y);
+    expect(() => course.projectRoad(point.x, point.z, NaN)).toThrow("finite");
+  });
   it("keeps closed progress wrapped and open descent endpoints distinct", () => {
     const loop = createLayoutQuery(fixture());
     expect(loop.sampleRoad(0)).toEqual(loop.sampleRoad(1));

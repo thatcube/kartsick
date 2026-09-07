@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { CUPS, DEFAULT_BUILD } from "@kartsick/content";
-import { createRace, stepRace } from "./race";
+import { RACE_POINTS, createRace, stepRace } from "./race";
 import type { RaceResult } from "./race";
-import { appendSeriesRound, createSeries, nextSeriesCourse, parseSeries, seriesMedal, seriesStandings } from "./series";
+import { appendSeriesResults, appendSeriesRound, createSeries, nextSeriesCourse, parseSeries, parseSeriesResults, seriesMedal, seriesStandings } from "./series";
 import type { SeriesProgress } from "./series";
+import { SERIES_COURSES, SERIES_POINTS } from "./series-metadata";
 
 function result(id: string, position: number, finished = true, time = 90): RaceResult {
   return { id, name: id, position, finished, disconnected: false, time: finished ? time : null, progress: finished ? 48 : 10, points: [10, 8, 6, 4, 3, 2, 1, 0][position - 1] };
@@ -14,6 +15,10 @@ function complete(): SeriesProgress {
   })) };
 }
 describe("circuits and tour scoring", () => {
+  it("keeps the wire-safe rules identical to the live content schedule and simulation scoring", () => {
+    expect(SERIES_COURSES).toEqual(Object.fromEntries(CUPS.map(cup => [cup.id, cup.courses])));
+    expect(SERIES_POINTS).toEqual(RACE_POINTS);
+  });
   it("keeps the actual three- and six-course schedules, never substitutes the available course", () => {
     expect(nextSeriesCourse(createSeries("town"))).toBe("butterbell");
     expect(nextSeriesCourse(createSeries("horizon"))).toBe("copperwhistle");
@@ -34,20 +39,20 @@ describe("circuits and tour scoring", () => {
   });
   it("retains incomplete results without fabricating a finish or medal", () => {
     const series = complete();
-    series.rounds[2].results[0] = result("one", 1, false);
+    series.rounds[2].results = [result("one", 1, false), result("two", 2, false), result("three", 3, false)];
     expect(seriesStandings(series)[0]).toMatchObject({ id: "one", points: 30, finishes: 2 });
     expect(seriesMedal(series, new Set(["one"]))).toBeNull();
     expect(parseSeries(series)).not.toBeNull();
   });
   it("breaks point ties by wins, finishes, recorded time, and a stable ID", () => {
     const series = complete();
-    series.rounds[0].results = [result("one", 1), result("two", 2, true, 80), result("three", 3)];
-    series.rounds[1].results = [result("two", 1, true, 80), result("three", 2), result("one", 3)];
-    series.rounds[2].results = [result("three", 1), result("one", 2), result("two", 3, true, 80)];
+    series.rounds[0].results = [result("one", 1, true, 70), result("two", 2, true, 80), result("three", 3)];
+    series.rounds[1].results = [result("two", 1, true, 70), result("three", 2, true, 80), result("one", 3)];
+    series.rounds[2].results = [result("three", 1, true, 70), result("one", 2, true, 80), result("two", 3, true, 80)];
     expect(seriesStandings(series).map(entry => entry.points)).toEqual([24, 24, 24]);
     expect(seriesStandings(series).map(entry => entry.id)).toEqual(["two", "one", "three"]);
     series.rounds.pop();
-    series.rounds[1].results = [result("three", 1), result("two", 2, true, 80), result("one", 3)];
+    series.rounds[1].results = [result("three", 1, true, 70), result("two", 2, true, 80), result("one", 3)];
     expect(seriesStandings(series).map(entry => entry.id)).toEqual(["one", "three", "two"]);
     series.rounds[1].results[2] = result("one", 3, false);
     expect(seriesStandings(series).map(entry => entry.id)).toEqual(["three", "one", "two"]);
@@ -78,5 +83,32 @@ describe("circuits and tour scoring", () => {
     const race = createRace({ courseId: "butterbell", mode: "race", speedClass: 100, mirror: false, bots: false, difficulty: "normal", seed: 1 },
       [{ id: "one", name: "One", build: DEFAULT_BUILD, players: ["player", null] }]);
     expect(() => appendSeriesRound(createSeries("town"), race)).toThrow("completed race");
+  });
+  it("appends independently attested results without weakening full-state validation", () => {
+    const rows = [result("one", 1), result("two", 2, false)];
+    const first = appendSeriesResults(createSeries("town"), "butterbell", rows);
+    expect(nextSeriesCourse(first)).toBe("escaluna");
+    rows[0].name = "Changed after append";
+    expect(first.rounds[0].results[0].name).toBe("one");
+    expect(() => appendSeriesResults(first, "butterbell", rows)).toThrow("next circuit");
+    const incomplete = createRace({ courseId: "butterbell", mode: "race", speedClass: 100, mirror: false,
+      bots: false, difficulty: "normal", seed: 1 }, [{ id: "one", name: "One", build: DEFAULT_BUILD, players: ["human", null] }]);
+    incomplete.results = [result("one", 1)];
+    expect(() => appendSeriesRound(createSeries("town"), incomplete)).toThrow("completed race");
+  });
+  it.each([
+    [], Array.from({ length: 9 }, (_, i) => result(String(i), i + 1)),
+    [result("one", 2)], [result("one", 1), result("one", 2)],
+    [{ ...result("one", 1), name: "\nRacer" }], [{ ...result("one", 1), name: " ".repeat(32) }],
+    [{ ...result("one", 1), name: "<b>Racer</b>" }], [{ ...result("one", 1), name: "x".repeat(33) }],
+    [{ ...result("one", 1), points: 99 }], [{ ...result("one", 1), time: Infinity }],
+    [{ ...result("one", 1), time: 1801 }], [{ ...result("one", 1), progress: NaN }],
+    [{ ...result("one", 1), time: null }], [result("one", 1, false), result("two", 2)],
+    [result("one", 1, true, 100), result("two", 2, true, 90)],
+    [result("one", 1, false), { ...result("two", 2, false), progress: 20 }],
+    [{ ...result("one", 1), extra: "not allowed" }],
+  ].map(rows => [rows] as const))("rejects invalid bounded result metadata %#", rows => {
+    expect(parseSeriesResults(rows)).toBeNull();
+    expect(() => appendSeriesResults(createSeries("town"), "butterbell", rows as RaceResult[])).toThrow();
   });
 });

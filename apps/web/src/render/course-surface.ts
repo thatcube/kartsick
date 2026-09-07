@@ -28,7 +28,7 @@ export function buildCourseSurface(art: Atelier, course: CourseQuery, layout: Co
         colors.push(groundColor.r * tint, groundColor.g * tint, groundColor.b * tint, 1);
         if (x < divisions && z < divisions) {
           const a = z * (divisions + 1) + x;
-          indices.push(a, a + divisions + 1, a + 1, a + 1, a + divisions + 1, a + divisions + 2);
+          indices.push(a, a + 1, a + divisions + 1, a + 1, a + divisions + 2, a + divisions + 1);
         }
       }
       const mesh = art.mesh(`${layout.id} terrain ${tileX}:${tileZ}`, positions, indices, colors);
@@ -70,7 +70,7 @@ export function buildCourseSurface(art: Atelier, course: CourseQuery, layout: Co
           positions.push(point.x + point.dz * side * halfWidth, point.y + 0.025, point.z - point.dx * side * halfWidth);
           uvs.push(side < 0 ? 0 : 1, point.distance / 13);
         }
-        indices.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
+        indices.push(base, base + 1, base + 2, base + 1, base + 3, base + 2);
         if (shoulder > halfWidth) {
           const color = rough ? verge : index % 8 < 4 ? edgeA : edgeB;
           for (const side of [-1, 1]) {
@@ -80,7 +80,7 @@ export function buildCourseSurface(art: Atelier, course: CourseQuery, layout: Co
               edges.push(point.x + point.dz * offset, point.y + 0.035, point.z - point.dx * offset);
               edgeColors.push(color.r, color.g, color.b, 1);
             }
-            edgeIndices.push(edge, edge + 2, edge + 1, edge + 1, edge + 2, edge + 3);
+            edgeIndices.push(edge, edge + 1, edge + 2, edge + 1, edge + 3, edge + 2);
           }
         }
         if (main && course.hasRail(a.u) && index % 5 === 0) {

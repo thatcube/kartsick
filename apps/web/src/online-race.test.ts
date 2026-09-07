@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_BUILD } from "@kartsick/content";
-import { NEUTRAL_PLAYER, copyRace, parseRaceState, stepRace } from "@kartsick/simulation";
+import { NEUTRAL_PLAYER, botInput, copyRace, parseRaceState, stepRace } from "@kartsick/simulation";
 import type { RaceEvent, RaceState } from "@kartsick/simulation";
-import { DEFAULT_LOBBY, sequenceIsNewer } from "@kartsick/protocol";
+import { DEFAULT_LOBBY, NETWORK_VERSION, sequenceIsNewer } from "@kartsick/protocol";
 import type { Checkpoint, InputAck, PlayerInputFrame, Room } from "@kartsick/protocol";
 import type { NetworkEvent } from "./network";
 import { OnlineRaceSession, decodeRaceEventBatch, roomRace } from "./online-race";
@@ -10,13 +10,15 @@ import type { RacingTransport } from "./online-race";
 
 function room(): Room {
   return {
-    version: 2, code: "ABCDEFGH", revision: 1, expiresAt: 100000, phase: "racing", hostId: "host", authorityId: "host", epoch: 1,
+    version: NETWORK_VERSION, code: "ABCDEFGH", revision: 1, expiresAt: 100000, phase: "racing", hostId: "host", authorityId: "host", epoch: 1,
     participants: [
       { id: "host", players: [{ id: "one", name: "One", ready: true }], connected: true, visible: true, capable: true, reservedUntil: null },
       { id: "guest", players: [{ id: "two", name: "Two", ready: true }], connected: true, visible: true, capable: true, reservedUntil: null },
     ],
     karts: Array.from({ length: 8 }, (_, index) => ({ build: structuredClone(DEFAULT_BUILD), seats: index === 0 ? ["one", null] : index === 1 ? ["two", null] : [null, null] })),
     config: { ...DEFAULT_LOBBY, bots: false }, startAt: 3000, seed: 42, checkpoint: null, pendingCheckpoint: null, reason: null,
+    round: { id: "round-one", courseId: "butterbell", roster: [{ id: "online-kart-1", name: "One" }, { id: "online-kart-2", name: "Two" }] },
+    series: null, lastRound: null,
   };
 }
 class Transport implements RacingTransport {
@@ -25,7 +27,16 @@ class Transport implements RacingTransport {
   isAuthority = true;
   connectedPeers = ["guest"];
   time = 0;
-  connection = { connected: true, serverNow: () => this.time };
+  finishes: Parameters<RacingTransport["connection"]["finishRound"]>[0][] = [];
+  finishAttempts = 0;
+  finishError: Error | null = null;
+  connection = { connected: true, serverNow: () => this.time,
+    finishRound: async (command: Parameters<RacingTransport["connection"]["finishRound"]>[0]) => {
+      this.finishAttempts++;
+      if (this.finishError) throw this.finishError;
+      this.finishes.push(structuredClone(command));
+    },
+  };
   incoming: PlayerInputFrame[] = [];
   history: PlayerInputFrame[] = [];
   snapshots: { state: RaceState; tick: number; acks: InputAck[] }[] = [];
@@ -68,7 +79,116 @@ class Transport implements RacingTransport {
   }
 }
 
+const flush = () => new Promise<void>(resolve => setImmediate(resolve));
+async function finishOnline(network: Transport, warnings: string[] = []): Promise<OnlineRaceSession> {
+  const session = new OnlineRaceSession(network, new Map([["local-1", "one"]]), message => warnings.push(message), () => network.time);
+  for (let tick = 0; tick < 30000 && !session.finished; tick++) {
+    network.time += 1000 / 60;
+    session.advance(1 / 60, {});
+  }
+  expect(session.finished).toBe(true);
+  await flush();
+  session.advance(0, {});
+  await flush();
+  expect(network.checkpoints.at(-1)?.state.phase).toBe("finished");
+  return session;
+}
+
 describe("authoritative browser race integration", () => {
+  it("freezes input acknowledgments when a multi-step finishing frame has unused callbacks", async () => {
+    const network = new Transport();
+    const race = roomRace(network.room);
+    let before = copyRace(race);
+    for (let tick = 0; tick < 30000 && race.phase !== "finished"; tick++) {
+      before = copyRace(race);
+      stepRace(race, {});
+    }
+    expect(race.phase).toBe("finished");
+    const session = new OnlineRaceSession(network, new Map([["local-1", "one"]]), () => {}, () => network.time);
+    session.restore({ reference: { id: "before-finish", tick: before.tick, digest: "0".repeat(64), acks: [] }, state: before });
+    network.time = 4000;
+    session.advance(2 / 60, { "local-1": botInput(before, before.karts[0]) });
+    await flush();
+    expect(session.finished).toBe(true);
+    const checkpoint = network.checkpoints.at(-1)!;
+    expect(checkpoint.state.phase).toBe("finished");
+    expect(checkpoint.reference.acks).toEqual([{ playerId: "one", sequence: 1 }]);
+    expect(network.history).toHaveLength(1);
+    network.time += 1000;
+    session.advance(0, {});
+    expect(network.snapshots.at(-1)?.acks).toEqual(checkpoint.reference.acks);
+    expect(network.snapshots.at(-1)?.state).toEqual(checkpoint.state);
+    session.dispose();
+  });
+  it("waits for commitment, preserves terminal state after departure, and restores results without a fresh race", async () => {
+    const network = new Transport(), host = await finishOnline(network);
+    const checkpoint = network.checkpoints.at(-1)!;
+    network.room.pendingCheckpoint = checkpoint.reference;
+    host.advance(0, {});
+    expect(network.finishes).toHaveLength(0);
+    network.room.checkpoint = checkpoint.reference;
+    network.emit({ type: "checkpoint", checkpoint });
+    await flush();
+    expect(network.finishes).toEqual([{
+      epoch: 1, roundId: "round-one", courseId: "butterbell", checkpointId: checkpoint.reference.id,
+      tick: checkpoint.reference.tick, results: checkpoint.state.results,
+    }]);
+    Object.assign(network.room, {
+      phase: "results", startAt: null, pendingCheckpoint: null,
+      lastRound: { roundId: "round-one", courseId: "butterbell",
+        checkpoint: { id: checkpoint.reference.id, tick: checkpoint.reference.tick, digest: checkpoint.reference.digest }, results: checkpoint.state.results },
+    });
+    network.emit({ type: "epoch", epoch: 1, authorityId: "host", phase: "results", checkpoint });
+    const fixed = copyRace(host.race), publications = network.checkpoints.length;
+    network.room.participants = network.room.participants.filter(participant => participant.id !== "guest");
+    network.room.karts[1].seats = [null, null];
+    network.emit({ type: "room", room: network.room });
+    network.time += 6500;
+    host.advance(10, { "local-1": { ...NEUTRAL_PLAYER, throttle: 1 } });
+    expect(host.race).toEqual(fixed);
+    expect(network.checkpoints).toHaveLength(publications);
+    expect(network.finishes).toHaveLength(1);
+    expect(() => new OnlineRaceSession(network, new Map(), () => {})).toThrow("fresh race");
+    host.dispose();
+    const restored = new OnlineRaceSession(network, new Map(), () => {}, () => network.time, checkpoint);
+    restored.advance(10, {});
+    expect(restored.race).toEqual(fixed);
+    expect(restored.finished).toBe(true);
+    expect(restored.connectionLabel).toBe("RESULTS SAVED TO ROOM");
+    restored.dispose();
+    expect(() => new OnlineRaceSession(network, new Map(), () => {}, undefined, {
+      ...checkpoint, state: { ...checkpoint.state, phase: "racing" },
+    })).toThrow("terminal checkpoint");
+  });
+  it("does not let a previous round complete a new round and bounds failed completion retries", async () => {
+    const network = new Transport(), warnings: string[] = [];
+    const host = await finishOnline(network, warnings);
+    const checkpoint = network.checkpoints.at(-1)!;
+    network.room.checkpoint = checkpoint.reference;
+    network.room.round!.id = "next-round";
+    network.emit({ type: "checkpoint", checkpoint });
+    expect(network.finishAttempts).toBe(0);
+    network.room.round!.id = "round-one";
+    network.finishError = new Error("Temporarily offline");
+    network.emit({ type: "checkpoint", checkpoint });
+    await flush();
+    for (let frame = 0; frame < 120; frame++) host.advance(1 / 60, {});
+    expect(network.finishAttempts).toBe(1);
+    network.time += 1001;
+    host.advance(0, {});
+    await flush();
+    expect(network.finishAttempts).toBe(2);
+    network.finishError = null;
+    network.time += 1001;
+    host.advance(0, {});
+    await flush();
+    network.time += 2000;
+    host.advance(0, {});
+    expect(network.finishAttempts).toBe(3);
+    expect(network.finishes).toHaveLength(1);
+    expect(warnings).toHaveLength(2);
+    host.dispose();
+  });
   it("decodes bounded same-tick event batches without sharing their input", () => {
     const events = [{ type: "start", kartId: "", tick: 180 }];
     expect(decodeRaceEventBatch(events)).toEqual(events);
@@ -80,6 +200,8 @@ describe("authoritative browser race integration", () => {
   });
   it("keeps eight actual configured builds and both fixed tandem identities", () => {
     const value = room();
+    value.phase = "lobby";
+    value.round = null;
     value.config.bots = true;
     value.karts[0].seats = ["one", "two"];
     value.karts[1].seats = [null, null];
@@ -118,6 +240,7 @@ describe("authoritative browser race integration", () => {
   it("never transmits spectator controls as if they owned a racing seat", () => {
     const network = new Transport();
     network.room.karts[0].seats = [null, null];
+    network.room.round!.roster = network.room.round!.roster.filter(racer => racer.id !== "online-kart-1");
     const session = new OnlineRaceSession(network, new Map([["local-1", "one"]]), () => {});
     session.advance(1 / 60, { "local-1": { ...NEUTRAL_PLAYER, throttle: 1 } });
     expect(network.history).toHaveLength(0);

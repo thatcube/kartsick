@@ -42,7 +42,7 @@ describe("actual room lifecycle", () => {
     expect(overflow.socket.error()).toBe("room-full");
     expect(t.engine.room.participants.flatMap(p => p.players)).toHaveLength(16);
     expect(parseRoom(t.engine.room).karts).toHaveLength(8);
-    expect(() => parseClientMessage({ version: 2, requestId: "x", type: "join", names: ["1", "2", "3", "4", "5"], resume: null, capability: { visible: true, capable: true } })).toThrow();
+    expect(() => parseClientMessage({ version: NETWORK_VERSION, requestId: "x", type: "join", names: ["1", "2", "3", "4", "5"], resume: null, capability: { visible: true, capable: true } })).toThrow();
   });
   it("validates seats/readiness/build ownership and keeps late arrivals spectators", async () => {
     const t = setup(), a = await t.join(["Driver", "Rear"]), b = await t.join();
@@ -93,7 +93,7 @@ describe("actual room lifecycle", () => {
     expect(b.socket.error()).toBe("stale-epoch");
     t.engine.disconnect(a.id);
     expect(t.engine.room.hostId).toBe(b.socket.welcome().participantId);
-    expect(() => parseClientMessage({ version: 2, requestId: "1", type: "ping", participantId: "spoof" })).toThrow();
+    expect(() => parseClientMessage({ version: NETWORK_VERSION, requestId: "1", type: "ping", participantId: "spoof" })).toThrow();
   });
   it("migrates only from an acknowledged committed checkpoint and fences the old epoch", async () => {
     const t = setup(), a = await t.join(), b = await t.join();
@@ -178,7 +178,7 @@ describe("actual room lifecycle", () => {
     for (let n = 0; n < 65; n++) await t.send(a.id, { type: "ping" });
     const restored = new RoomEngine("ABCDEFGH", () => 100_000, t.engine.export());
     const socket = new Socket(); restored.reattach(a.id, socket);
-    for (let n = 0; n < 20; n++) await restored.receive(a.id, JSON.stringify({ version: 2, type: "ping", requestId: String(n) }));
+    for (let n = 0; n < 20; n++) await restored.receive(a.id, JSON.stringify({ version: NETWORK_VERSION, type: "ping", requestId: String(n) }));
     expect(socket.error()).toBe("rate-limited");
     const idle = setup(); idle.advance(600_000); expect(idle.engine.expired).toBe(true);
     const bucket = new TokenBucket(2, 1, 0);
@@ -199,7 +199,7 @@ describe("race transport boundaries", () => {
   });
   it("requires an application snapshot decoder and enforces schemas, sizes and full inputs", async () => {
     const decode = (value: unknown) => { if (typeof value !== "number" || !Number.isFinite(value)) throw new TypeError(); return value; };
-    const packet = { version: 2 as const, type: "snapshot" as const, epoch: 2, sequence: 3, tick: 5, acks: [], state: 4 };
+    const packet = { version: NETWORK_VERSION as typeof NETWORK_VERSION, type: "snapshot" as const, epoch: 2, sequence: 3, tick: 5, acks: [], state: 4 };
     expect(parseDataPacket(JSON.stringify(packet), decode, decode)).toEqual(packet);
     expect(() => parseDataPacket(JSON.stringify({ ...packet, state: { execute: "no" } }), decode, decode)).toThrow();
     expect(() => parseDataPacket(JSON.stringify({ ...packet, state: Infinity }), decode, decode)).toThrow();
@@ -227,7 +227,7 @@ describe("race transport boundaries", () => {
   it("transports the current complete eight-kart RaceState through its real decoder", () => {
     const state = createRace({ courseId: "butterbell", mode: "race", speedClass: 100, mirror: false, bots: true, difficulty: "normal", seed: 123 },
       [{ id: "kart-0", name: "Human", build: DEFAULT_BUILD, players: ["player-0", null] }]);
-    const raw = encodeDataPacket({ version: 2, type: "snapshot", epoch: 1, sequence: 1, tick: state.tick, acks: [], state });
+    const raw = encodeDataPacket({ version: NETWORK_VERSION, type: "snapshot", epoch: 1, sequence: 1, tick: state.tick, acks: [], state });
     const packet = parseDataPacket(raw, parseRaceState, () => { throw new TypeError(); });
     expect(packet.type).toBe("snapshot");
     if (packet.type === "snapshot") expect(packet.state.karts).toHaveLength(8);

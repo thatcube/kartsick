@@ -1,9 +1,12 @@
 import {
   CONTROL_BUFFER_LIMIT, WIRE_MAX_BYTES, NETWORK_VERSION, SNAPSHOT_BUFFER_LIMIT, WireAssembler, checkpointDigest, encodeDataPacket,
-  byteLength, fragmentPacket, parseAcks, parseDataPacket, parseInputFrame, sequenceIsNewer,
+  parseAcks, parseDataPacket, parseInputFrame, sequenceIsNewer,
   type Checkpoint, type DataPacket, type InputAck, type NetworkInput, type PeerSignal, type PlayerInputFrame, type Room,
 } from "@kartsick/protocol";
 import { InputQueue } from "./input-queue";
+import { BroadcastEncoding, decompressMessage } from "./compression";
+import { COMPRESSION_LICENSE_TEXT } from "./compression-license";
+import { COMPRESSION_CHANNEL, CompressionNegotiation } from "./compression-negotiation";
 import { NetworkError, RoomConnection, type RoomConnectionEvent, type RoomOptions } from "./room-connection";
 export { InputQueue, NetworkError, RoomConnection };
 export type { RoomOptions };
@@ -50,9 +53,11 @@ interface Peer {
   pendingControl: string[];
   pendingControlBytes: number;
   assembler: WireAssembler;
+  compression: CompressionNegotiation | null;
 }
 const neutralDecodeEvent = (): never => { throw new TypeError("Application event decoder was not provided."); };
 export class KartsickNetwork<T, E = never> {
+  static readonly compressionLicense = COMPRESSION_LICENSE_TEXT;
   private readonly peers = new Map<string, Peer>();
   private readonly failedEdges = new Map<string, number>();
   private readonly listeners = new Set<(event: NetworkEvent<T, E>) => void>();
@@ -64,6 +69,7 @@ export class KartsickNetwork<T, E = never> {
   private readonly checkpoints = new Map<string, Checkpoint<T>>();
   private readonly earlyIce = new Map<string, RTCIceCandidateInit[]>();
   private readonly lastHave = new Set<string>();
+  private checkpointAckGeneration = 0;
   private readonly decodeEvent: (value: unknown) => E;
   private readonly decodeState: (value: unknown) => T;
   private readonly unsubscribe: () => void;
@@ -115,7 +121,7 @@ export class KartsickNetwork<T, E = never> {
   }
   get room(): Room | null { return this.connection.room; }
   get participantId(): string | null { return this.connection.participantId; }
-  get isAuthority(): boolean { return !this.disposed && document.visibilityState === "visible" && this.connection.connected && this.authorityId === this.participantId && this.phase === "racing"; }
+  get isAuthority(): boolean { return !this.disposed && document.visibilityState === "visible" && this.connection.connected && this.authorityId === this.participantId && (this.phase === "racing" || this.phase === "results"); }
   get connectedPeers(): string[] { return [...this.peers.values()].filter(p => p.connected).map(p => p.id); }
   subscribe(listener: (event: NetworkEvent<T, E>) => void): () => void {
     this.listeners.add(listener);
@@ -135,7 +141,7 @@ export class KartsickNetwork<T, E = never> {
     if (event.type === "room") this.updateRoom(event.room);
     else if (event.type === "error") this.emit(event);
     else if (event.type === "status") {
-      if (event.status !== "connected") this.closePeers();
+      if (event.status !== "connected") { this.closePeers(); this.resetCheckpointAcknowledgments(); }
       else if (this.room) { this.failedEdges.clear(); this.syncPeers(this.room); }
       this.emit({ type: "signaling", status: event.status });
     } else {
@@ -148,6 +154,7 @@ export class KartsickNetwork<T, E = never> {
     const phaseChanged = room.phase !== this.phase;
     if (changed) {
       this.failedEdges.clear();
+      this.resetCheckpointAcknowledgments();
       this.closePeers(); this.earlyIce.clear(); this.pending.clear(); this.incoming.clear(); this.receivedSequence.clear();
       this.inputSequence.clear(); this.snapshotAcks.clear(); this.snapshotSequence = 0; this.lastSnapshot = null; this.lastSnapshotTick = 0; this.eventSequence = 0;
       this.epoch = room.epoch; this.authorityId = room.authorityId;
@@ -157,7 +164,7 @@ export class KartsickNetwork<T, E = never> {
       }
     }
     this.phase = room.phase;
-    if (room.phase === "lobby" && phaseChanged) { this.checkpoints.clear(); this.lastHave.clear(); this.lastCommitted = null; }
+    if (room.phase === "lobby" && phaseChanged) { this.checkpoints.clear(); this.resetCheckpointAcknowledgments(); this.lastCommitted = null; }
     if (changed || phaseChanged) this.emit({ type: "epoch", epoch: room.epoch, authorityId: room.authorityId, phase: room.phase, checkpoint: this.currentCheckpoint() });
     this.emit({ type: "room", room });
     this.acknowledgeCheckpoint();
@@ -169,6 +176,9 @@ export class KartsickNetwork<T, E = never> {
       this.migrationEpoch = room.epoch; void this.restoreAuthority(room);
     }
     this.syncPeers(room);
+    if (phaseChanged && room.phase === "results" && this.isAuthority) {
+      for (const peer of this.peers.values()) this.resendCheckpoint(peer);
+    }
   }
   private currentCheckpoint(): Checkpoint<T> | null {
     const ref = this.room?.checkpoint; if (!ref) return null;
@@ -205,7 +215,7 @@ export class KartsickNetwork<T, E = never> {
     const pc = new RTCPeerConnection(this.rtcConfig);
     const peer: Peer = { id, attempt, number, epoch: this.epoch, pc, movement: null, control: null,
       candidates: [], timer: undefined, disconnectTimer: undefined, connected: false, closed: false,
-      receivedAt: performance.now(), allowance: 600, lastEvent: null, pendingControl: [], pendingControlBytes: 0, assembler: new WireAssembler() };
+      receivedAt: performance.now(), allowance: 600, lastEvent: null, pendingControl: [], pendingControlBytes: 0, assembler: new WireAssembler(), compression: null };
     this.peers.set(id, peer);
     this.emit({ type: "peer", participantId: id, status: "connecting", attempt: number });
     pc.onicecandidate = event => {
@@ -239,6 +249,8 @@ export class KartsickNetwork<T, E = never> {
     try {
       this.bindChannel(peer, peer.pc.createDataChannel("movement-v2", { ordered: false, maxRetransmits: 0 }));
       this.bindChannel(peer, peer.pc.createDataChannel("control-v2", { ordered: true }));
+      try { this.bindChannel(peer, peer.pc.createDataChannel(COMPRESSION_CHANNEL, { ordered: true })); }
+      catch { /* Optional codec probing must not prevent an ordinary uncompressed connection. */ }
       const offer = await peer.pc.createOffer();
       if (peer.closed) return;
       await peer.pc.setLocalDescription(offer);
@@ -287,6 +299,13 @@ export class KartsickNetwork<T, E = never> {
     }
   }
   private bindChannel(peer: Peer, channel: RTCDataChannel): void {
+    if (channel.label === COMPRESSION_CHANNEL) {
+      if (peer.closed || peer.compression || !channel.ordered || channel.maxRetransmits !== null || channel.maxPacketLifeTime !== null) {
+        channel.close(); return;
+      }
+      peer.compression = new CompressionNegotiation(channel, peer.epoch, this.authorityId === this.participantId);
+      return;
+    }
     const movement = channel.label === "movement-v2";
     if (movement ? channel.ordered || channel.maxRetransmits !== 0 || peer.movement !== null :
       channel.label !== "control-v2" || !channel.ordered || channel.maxRetransmits !== null || channel.maxPacketLifeTime !== null || peer.control !== null) {
@@ -300,7 +319,10 @@ export class KartsickNetwork<T, E = never> {
       catch (error) { this.error("control-send", error); this.failDirect(peer); return; }
       peer.pendingControl = []; peer.pendingControlBytes = 0;
       this.emit({ type: "peer", participantId: peer.id, status: "connected", attempt: peer.number });
-      if (this.isAuthority) this.emit({ type: "resync", participantId: peer.id, reason: "New or reconnected peer needs a fresh authoritative snapshot." });
+      if (this.isAuthority) {
+        this.resendCheckpoint(peer);
+        this.emit({ type: "resync", participantId: peer.id, reason: "New or reconnected peer needs a fresh authoritative snapshot." });
+      }
       else this.sendControl(peer, { version: NETWORK_VERSION, type: "resync", epoch: this.epoch });
     };
     channel.onclose = () => { if (!peer.closed) this.retryPeer(peer); };
@@ -335,15 +357,26 @@ export class KartsickNetwork<T, E = never> {
     peer.allowance--;
     try {
       const assembled = peer.assembler.accept(raw, this.epoch, movement, performance.now());
-      if (assembled === null) return;
-      const packet = parseDataPacket(assembled, this.decodeState, this.decodeEvent);
+      if (assembled === null || peer.epoch !== this.epoch) return;
+      const payload = decompressMessage(assembled, peer.compression?.canReceive ?? false, this.epoch);
+      if (payload === null) return;
+      const packet = parseDataPacket(payload, this.decodeState, this.decodeEvent);
+      if (payload !== assembled && packet.type !== "snapshot" && packet.type !== "checkpoint")
+        throw new TypeError("Compression is reserved for complete snapshots and checkpoints.");
       if (packet.epoch !== this.epoch || peer.epoch !== this.epoch) return;
       if (movement !== (packet.type === "inputs" || packet.type === "snapshot")) throw new TypeError("Wrong data channel.");
       if (packet.type === "inputs") {
-        if (this.isAuthority) this.acceptInputs(peer.id, packet.frames, packet.snapshotAck);
+        if (this.isAuthority) this.acceptInputs(peer.id, this.phase === "racing" ? packet.frames : [], packet.snapshotAck);
       } else if (packet.type === "snapshot") {
-        if (peer.id !== this.authorityId || this.phase !== "racing" || packet.tick < this.lastSnapshotTick ||
+        if (peer.id !== this.authorityId || (this.phase !== "racing" &&
+          !(this.phase === "results" && packet.tick === this.room?.lastRound?.checkpoint.tick)) || packet.tick < this.lastSnapshotTick ||
           (this.lastSnapshot !== null && !sequenceIsNewer(packet.sequence, this.lastSnapshot))) return;
+        if (this.phase === "results") {
+          const digest = await checkpointDigest(packet.tick, packet.acks, packet.state);
+          if (peer.closed || this.epoch !== packet.epoch || this.phase !== "results") return;
+          if (digest !== this.room?.checkpoint?.digest) throw new TypeError("The terminal snapshot differs from its accepted checkpoint.");
+          if (this.lastSnapshot !== null && !sequenceIsNewer(packet.sequence, this.lastSnapshot)) return;
+        }
         this.validateAcks(packet.acks);
         this.lastSnapshot = packet.sequence; this.lastSnapshotTick = packet.tick; this.pending.acknowledge(packet.acks);
         for (const ack of packet.acks) if (this.participantId && this.owns(this.participantId, ack.playerId)) {
@@ -353,10 +386,14 @@ export class KartsickNetwork<T, E = never> {
         this.emit({ type: "snapshot", epoch: packet.epoch, sequence: packet.sequence, tick: packet.tick, acks: packet.acks, state: packet.state });
         this.sendMovement(peer, { version: NETWORK_VERSION, type: "inputs", epoch: this.epoch, frames: [], snapshotAck: packet.sequence });
       } else if (packet.type === "checkpoint") {
-        if (peer.id !== this.authorityId || this.phase !== "racing") return;
+        const allowed = () => this.phase === "racing" || this.phase === "results" &&
+          packet.checkpoint.reference.id === this.room?.checkpoint?.id &&
+          packet.checkpoint.reference.tick === this.room.checkpoint.tick &&
+          packet.checkpoint.reference.digest === this.room.checkpoint.digest;
+        if (peer.id !== this.authorityId || !allowed()) return;
         this.validateAcks(packet.checkpoint.reference.acks);
         const digest = await checkpointDigest(packet.checkpoint.reference.tick, packet.checkpoint.reference.acks, packet.checkpoint.state);
-        if (peer.closed || this.epoch !== packet.epoch) return;
+        if (peer.closed || this.epoch !== packet.epoch || !allowed()) return;
         if (digest !== packet.checkpoint.reference.digest) throw new TypeError("Invalid checkpoint checksum.");
         this.storeCheckpoint(packet.checkpoint); this.acknowledgeCheckpoint();
       } else if (packet.type === "event") {
@@ -403,29 +440,40 @@ export class KartsickNetwork<T, E = never> {
   retryConnections(): void { this.failedEdges.clear(); this.connection.reconnect(); }
   getSnapshotAcks(): ReadonlyMap<string, number> { return new Map(this.snapshotAcks); }
   private validateAcks(acks: InputAck[]): void {
-    if (acks.some(ack => !this.room?.participants.some(p => p.players.some(player => player.id === ack.playerId))))
+    if (acks.some(ack => !this.room?.participants.some(p => p.players.some(player => player.id === ack.playerId)) &&
+      !this.room?.checkpoint?.acks.some(saved => saved.playerId === ack.playerId && saved.sequence === ack.sequence)))
       throw new TypeError("Unknown player in snapshot acknowledgments.");
   }
   broadcastSnapshot(state: T, tick: number, acknowledgments: InputAck[]): { sequence: number; sent: number; dropped: number } {
     if (!this.isAuthority) throw new NetworkError("not-authority", "Only the active visible authority publishes race state.");
+    if (this.phase === "results" && tick !== this.room?.lastRound?.checkpoint.tick)
+      throw new NetworkError("terminal-tick", "Completed race snapshots must retain their committed tick.");
     const acks = parseAcks(acknowledgments); this.validateAcks(acks);
     const decoded = this.decodeState(structuredClone(state));
+    if (this.phase === "results") {
+      const committed = this.currentCheckpoint();
+      if (!committed || JSON.stringify(decoded) !== JSON.stringify(committed.state) ||
+        JSON.stringify(acks) !== JSON.stringify(committed.reference.acks))
+        throw new NetworkError("terminal-state", "Completed race state must remain identical to its accepted checkpoint.");
+    }
     const sequence = this.snapshotSequence = (this.snapshotSequence + 1) >>> 0;
     const packet = parseDataPacket(encodeDataPacket<T, E>({ version: NETWORK_VERSION, type: "snapshot", epoch: this.epoch, sequence, tick, acks, state: decoded }),
       this.decodeState, this.decodeEvent);
+    const encoding = new BroadcastEncoding(encodeDataPacket(packet), this.epoch, true);
     let sent = 0, dropped = 0;
-    for (const peer of this.peers.values()) if (this.sendMovement(peer, packet)) sent++; else dropped++;
+    for (const peer of this.peers.values()) if (this.sendMovement(peer, packet, encoding)) sent++; else dropped++;
     this.pending.acknowledge(acks);
     return { sequence, sent, dropped };
   }
   broadcastEvent(event: E): void {
-    if (!this.isAuthority) throw new NetworkError("not-authority", "Only the authority sends reliable race events.");
+    if (!this.isAuthority || this.phase !== "racing") throw new NetworkError("not-authority", "Only the active race authority sends reliable race events.");
     const packet: DataPacket<T, E> = { version: NETWORK_VERSION, type: "event", epoch: this.epoch,
       sequence: this.eventSequence = (this.eventSequence + 1) >>> 0, event: this.decodeEvent(structuredClone(event)) };
-    for (const peer of this.peers.values()) this.sendControl(peer, packet);
+    const encoding = new BroadcastEncoding(encodeDataPacket(packet), this.epoch, false);
+    for (const peer of this.peers.values()) this.sendControl(peer, packet, encoding);
   }
   async commitCheckpoint(state: T, tick: number, acknowledgments: InputAck[]): Promise<Checkpoint<T>> {
-    if (!this.isAuthority || this.proposalInProgress) throw new NetworkError("checkpoint-unavailable", "A checkpoint publication is already running or this browser is not authority.");
+    if (!this.isAuthority || this.phase !== "racing" || this.proposalInProgress) throw new NetworkError("checkpoint-unavailable", "A checkpoint publication is already running or this browser is not the active race authority.");
     this.proposalInProgress = true;
     const epoch = this.epoch;
     try {
@@ -434,12 +482,14 @@ export class KartsickNetwork<T, E = never> {
       const digest = await checkpointDigest(tick, acks, decoded);
       const checkpoint: Checkpoint<T> = { reference: { id: crypto.randomUUID(), tick, digest, acks }, state: decoded };
       const packet: DataPacket<T, E> = { version: NETWORK_VERSION, type: "checkpoint", epoch, checkpoint };
-      parseDataPacket(encodeDataPacket(packet), this.decodeState, this.decodeEvent);
+      const raw = encodeDataPacket(packet);
+      parseDataPacket(raw, this.decodeState, this.decodeEvent);
+      const encoding = new BroadcastEncoding(raw, epoch, true);
       if (!this.isAuthority || this.epoch !== epoch) throw new NetworkError("stale-epoch", "Authority changed during checkpoint creation.");
       this.storeCheckpoint(checkpoint);
       await this.connection.request({ type: "checkpoint-propose", epoch, checkpoint: checkpoint.reference });
       if (this.epoch !== epoch || !this.isAuthority) throw new NetworkError("stale-epoch", "Authority changed during checkpoint publication.");
-      for (const peer of this.peers.values()) this.sendControl(peer, packet);
+      for (const peer of this.peers.values()) this.sendControl(peer, packet, encoding);
       return structuredClone(checkpoint);
     } finally { this.proposalInProgress = false; }
   }
@@ -450,29 +500,48 @@ export class KartsickNetwork<T, E = never> {
       if (id !== this.room?.checkpoint?.id && id !== checkpoint.reference.id) this.checkpoints.delete(id);
     }
   }
+  private resetCheckpointAcknowledgments(): void {
+    this.lastHave.clear();
+    this.checkpointAckGeneration++;
+  }
   private acknowledgeCheckpoint(): void {
-    const ref = this.room?.pendingCheckpoint;
-    if (!ref || this.authorityId === this.participantId || this.lastHave.has(ref.id) || this.phase !== "racing") return;
+    const ref = this.phase === "results" ? this.room?.checkpoint : this.room?.pendingCheckpoint;
+    if (!ref || this.authorityId === this.participantId || this.lastHave.has(ref.id) || (this.phase !== "racing" && this.phase !== "results")) return;
     const local = this.checkpoints.get(ref.id); if (!local || local.reference.digest !== ref.digest) return;
+    const generation = this.checkpointAckGeneration;
     this.lastHave.add(ref.id); if (this.lastHave.size > 4) this.lastHave.delete(this.lastHave.values().next().value ?? "");
     void this.connection.request({ type: "checkpoint-have", epoch: this.epoch, checkpointId: ref.id, digest: ref.digest })
-      .catch(error => { this.lastHave.delete(ref.id); this.error("checkpoint-ack", error); });
+      .catch(error => {
+        if (generation !== this.checkpointAckGeneration) return;
+        this.lastHave.delete(ref.id); this.error("checkpoint-ack", error);
+      });
   }
-  private sendMovement(peer: Peer, packet: DataPacket<T, E>): boolean {
+  private resendCheckpoint(peer: Peer): void {
+    const ref = this.phase === "results" ? this.room?.checkpoint : this.room?.pendingCheckpoint ?? this.room?.checkpoint;
+    const checkpoint = ref && this.checkpoints.get(ref.id);
+    if (!checkpoint || checkpoint.reference.digest !== ref.digest) return;
+    const packet: DataPacket<T, E> = { version: NETWORK_VERSION, type: "checkpoint", epoch: this.epoch, checkpoint };
+    this.sendControl(peer, packet, new BroadcastEncoding(encodeDataPacket(packet), this.epoch, true));
+  }
+  private sendMovement(peer: Peer, packet: DataPacket<T, E>, encoding?: BroadcastEncoding): boolean {
     const channel = peer.movement;
-    if (peer.closed || channel?.readyState !== "open") return false;
-    const messages = fragmentPacket(encodeDataPacket(packet), this.epoch);
-    if (channel.bufferedAmount + messages.reduce((sum, message) => sum + byteLength(message), 0) > SNAPSHOT_BUFFER_LIMIT) return false;
+    if (peer.closed || channel?.readyState !== "open" || channel.bufferedAmount >= SNAPSHOT_BUFFER_LIMIT) return false;
+    const { messages, bytes } = (encoding ?? new BroadcastEncoding(encodeDataPacket(packet), this.epoch, false))
+      .forPeer(peer.compression?.canSend ?? false);
+    if (channel.bufferedAmount + bytes > SNAPSHOT_BUFFER_LIMIT) return false;
     try { for (const raw of messages) channel.send(raw); return true; } catch { return false; }
   }
-  private sendControl(peer: Peer, packet: DataPacket<T, E>): boolean {
+  private sendControl(peer: Peer, packet: DataPacket<T, E>, encoding?: BroadcastEncoding): boolean {
     const channel = peer.control;
     if (peer.closed) return false;
-    const messages = fragmentPacket(encodeDataPacket(packet), this.epoch), bytes = messages.reduce((sum, raw) => sum + byteLength(raw), 0);
+    const { messages, bytes } = (encoding ?? new BroadcastEncoding(encodeDataPacket(packet), this.epoch, false))
+      .forPeer(peer.compression?.canSend ?? false);
     if ((channel?.bufferedAmount ?? 0) + peer.pendingControlBytes + bytes > CONTROL_BUFFER_LIMIT || peer.pendingControl.length + messages.length > 64) {
       this.error("control-backpressure", new Error("Reliable race events could not be delivered.")); this.failDirect(peer); return false;
     }
-    if (channel?.readyState !== "open") { peer.pendingControl.push(...messages); peer.pendingControlBytes += bytes; return true; }
+    if (channel?.readyState !== "open" || peer.pendingControl.length > 0) {
+      peer.pendingControl.push(...messages); peer.pendingControlBytes += bytes; return true;
+    }
     try { for (const raw of messages) channel.send(raw); return true; }
     catch (error) { this.error("control-send", error); this.failDirect(peer); return false; }
   }
@@ -499,6 +568,7 @@ export class KartsickNetwork<T, E = never> {
   private closePeer(peer: Peer): void {
     if (peer.closed) return;
     peer.closed = true; clearTimeout(peer.timer); clearTimeout(peer.disconnectTimer);
+    peer.compression?.dispose(); peer.compression = null;
     peer.assembler.clear(); peer.pendingControl = []; peer.pendingControlBytes = 0;
     peer.pc.onicecandidate = null; peer.pc.ondatachannel = null; peer.pc.onconnectionstatechange = null;
     for (const channel of [peer.movement, peer.control]) if (channel) {

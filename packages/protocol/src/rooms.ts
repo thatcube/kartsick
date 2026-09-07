@@ -2,16 +2,21 @@ import {
   BODY_IDS, CHARACTER_IDS, COURSE_IDS, DECAL_IDS, GLIDER_IDS, PAINT_IDS, WHEEL_IDS,
   type CourseId, type KartBuild,
 } from "../../content/src/catalog-types.ts";
-import { array, boolean, choice, id, keys, nullableId, object, text, uint } from "./validation.ts";
+import { nextSeriesCourse, parseSeries, parseSeriesResults } from "../../simulation/src/series-metadata.ts";
+import type { SeriesProgress } from "../../simulation/src/series-metadata.ts";
+import type { RaceResult } from "../../simulation/src/race.ts";
+import { array, boolean, byteLength, choice, id, keys, nullableId, object, text, uint } from "./validation.ts";
 export { byteLength, json } from "./validation.ts";
 
-export const NETWORK_VERSION = 2;
+export const NETWORK_VERSION = 3;
 export const SIGNAL_MAX_BYTES = 24_576;
+/** Leaves room for the largest welcome envelope and its resume credential. */
+export const ROOM_MAX_BYTES = SIGNAL_MAX_BYTES - 256;
 export const ROOM_TTL_MS = 4 * 60 * 60 * 1000;
 export const ROOM_IDLE_MS = 10 * 60 * 1000;
 export const RESERVATION_MS = 60_000;
 export const ROOM_CODE_PATTERN = /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$/;
-export type RoomPhase = "lobby" | "racing" | "migrating" | "paused";
+export type RoomPhase = "lobby" | "racing" | "migrating" | "paused" | "results";
 export interface LocalPlayer { id: string; name: string; ready: boolean }
 export interface Participant {
   id: string;
@@ -37,6 +42,19 @@ export const DEFAULT_LOBBY: LobbyConfig = {
 };
 export interface InputAck { playerId: string; sequence: number }
 export interface CheckpointRef { id: string; tick: number; digest: string; acks: InputAck[] }
+export interface RoomRound {
+  /** Fresh for every start, including retries of an aborted course. */
+  id: string;
+  courseId: CourseId;
+  roster: { id: string; name: string }[];
+}
+export interface CompletedRoomRound {
+  roundId: string;
+  courseId: CourseId;
+  /** Input acknowledgments stay on Room.checkpoint; they need not be copied into the scoreboard. */
+  checkpoint: Pick<CheckpointRef, "id" | "tick" | "digest">;
+  results: RaceResult[];
+}
 export interface Room {
   version: typeof NETWORK_VERSION;
   code: string;
@@ -53,6 +71,12 @@ export interface Room {
   seed: number;
   checkpoint: CheckpointRef | null;
   pendingCheckpoint: CheckpointRef | null;
+  /** Null in a lobby; otherwise the immutable roster/course captured by this particular start. */
+  round: RoomRound | null;
+  /** Null for quick races and fresh lobbies; cumulative points are derived with seriesStandings. */
+  series: SeriesProgress | null;
+  /** Survives next-course preparation and active-round aborts; return/rematch explicitly clear it. */
+  lastRound: CompletedRoomRound | null;
   reason: string | null;
 }
 export interface Capability { visible: boolean; capable: boolean }
@@ -71,6 +95,8 @@ export type RoomCommand =
   | { type: "signal"; to: string; epoch: number; attempt: string; signal: PeerSignal }
   | { type: "checkpoint-propose"; epoch: number; checkpoint: CheckpointRef }
   | { type: "checkpoint-have"; epoch: number; checkpointId: string; digest: string }
+  | { type: "finish"; epoch: number; roundId: string; courseId: CourseId; checkpointId: string; tick: number; results: RaceResult[] }
+  | { type: "next-course"; epoch: number; roundId: string }
   | { type: "migration-ready"; epoch: number; checkpointId: string }
   | { type: "migration-failed"; epoch: number }
   | { type: "transport-failed"; epoch: number; peerId: string };
@@ -107,6 +133,41 @@ export function parseAcks(value: unknown): InputAck[] {
 export function parseCheckpointRef(value: unknown): CheckpointRef {
   const v = object(value); keys(v, ["id", "tick", "digest", "acks"]);
   return { id: id(v.id), tick: uint(v.tick), digest: text(v.digest, 64, /^[a-f0-9]{64}$/), acks: parseAcks(v.acks) };
+}
+function kartId(value: unknown): string {
+  return text(value, 13, /^online-kart-[1-8]$/);
+}
+export function parseRoomResults(value: unknown): RaceResult[] {
+  const results = parseSeriesResults(value);
+  if (!results) throw new TypeError("Invalid completed race results.");
+  for (const result of results) kartId(result.id);
+  return results;
+}
+function parseRound(value: unknown): RoomRound {
+  const v = object(value); keys(v, ["id", "courseId", "roster"]);
+  const roster = array(v.roster, 8, entry => {
+    const r = object(entry); keys(r, ["id", "name"]);
+    const name = text(r.name, 32, /^[^\u0000-\u001f\u007f<>]{1,32}$/);
+    if (!name.trim()) throw new TypeError("Empty racer name.");
+    return { id: kartId(r.id), name };
+  });
+  if (!roster.length || new Set(roster.map(racer => racer.id)).size !== roster.length) throw new TypeError("Invalid round roster.");
+  return { id: id(v.id), courseId: choice(v.courseId, COURSE_IDS), roster };
+}
+function parseCompletedRound(value: unknown): CompletedRoomRound {
+  const v = object(value); keys(v, ["roundId", "courseId", "checkpoint", "results"]);
+  const c = object(v.checkpoint); keys(c, ["id", "tick", "digest"]);
+  return {
+    roundId: id(v.roundId), courseId: choice(v.courseId, COURSE_IDS), results: parseRoomResults(v.results),
+    checkpoint: { id: id(c.id), tick: uint(c.tick), digest: text(c.digest, 64, /^[a-f0-9]{64}$/) },
+  };
+}
+/** A previous course's scoreboard never exempts a new active checkpoint from freshness checks. */
+export function isTerminalRound(room: Pick<Room, "round" | "lastRound" | "checkpoint">): boolean {
+  const last = room.lastRound, checkpoint = room.checkpoint;
+  return !!last && last.roundId === room.round?.id && last.courseId === room.round.courseId &&
+    !!checkpoint && last.checkpoint.id === checkpoint.id && last.checkpoint.tick === checkpoint.tick &&
+    last.checkpoint.digest === checkpoint.digest;
 }
 function capability(value: unknown): Capability {
   const v = object(value); keys(v, ["visible", "capable"]);
@@ -157,6 +218,11 @@ export function parseClientMessage(value: unknown): ClientMessage {
       to: id(v.to), epoch: uint(v.epoch), attempt: id(v.attempt), signal: parsePeerSignal(v.signal) };
     case "checkpoint-propose": fields("epoch", "checkpoint"); return { ...common, type: "checkpoint-propose", epoch: uint(v.epoch), checkpoint: parseCheckpointRef(v.checkpoint) };
     case "checkpoint-have": fields("epoch", "checkpointId", "digest"); return { ...common, type: "checkpoint-have", epoch: uint(v.epoch), checkpointId: id(v.checkpointId), digest: text(v.digest, 64, /^[a-f0-9]{64}$/) };
+    case "finish": fields("epoch", "roundId", "courseId", "checkpointId", "tick", "results"); return {
+      ...common, type: "finish", epoch: uint(v.epoch), roundId: id(v.roundId), courseId: choice(v.courseId, COURSE_IDS),
+      checkpointId: id(v.checkpointId), tick: uint(v.tick), results: parseRoomResults(v.results),
+    };
+    case "next-course": fields("epoch", "roundId"); return { ...common, type: "next-course", epoch: uint(v.epoch), roundId: id(v.roundId) };
     case "migration-ready": fields("epoch", "checkpointId"); return { ...common, type: "migration-ready", epoch: uint(v.epoch), checkpointId: id(v.checkpointId) };
     case "migration-failed": fields("epoch"); return { ...common, type: "migration-failed", epoch: uint(v.epoch) };
     case "transport-failed": fields("epoch", "peerId"); return { ...common, type: "transport-failed", epoch: uint(v.epoch), peerId: id(v.peerId) };
@@ -166,7 +232,8 @@ export function parseClientMessage(value: unknown): ClientMessage {
 }
 export function parseRoom(value: unknown): Room {
   const v = object(value);
-  keys(v, ["version", "code", "revision", "expiresAt", "phase", "hostId", "authorityId", "epoch", "participants", "karts", "config", "startAt", "seed", "checkpoint", "pendingCheckpoint", "reason"]);
+  if (byteLength(JSON.stringify(v)) > ROOM_MAX_BYTES) throw new TypeError("Room metadata exceeds its signaling envelope budget.");
+  keys(v, ["version", "code", "revision", "expiresAt", "phase", "hostId", "authorityId", "epoch", "participants", "karts", "config", "startAt", "seed", "checkpoint", "pendingCheckpoint", "round", "series", "lastRound", "reason"]);
   if (v.version !== NETWORK_VERSION) throw new TypeError("Unsupported room version.");
   const participants = array(v.participants, 16, entry => {
     const p = object(entry); keys(p, ["id", "players", "connected", "reservedUntil", "visible", "capable"]);
@@ -191,13 +258,50 @@ export function parseRoom(value: unknown): Room {
   if (karts.length !== 8 || new Set(occupied).size !== occupied.length || occupied.some(s => !players.includes(s))) throw new TypeError("Invalid seat ownership.");
   const hostId = nullableId(v.hostId), authorityId = nullableId(v.authorityId);
   if ([hostId, authorityId].some(pid => pid !== null && !participants.some(p => p.id === pid))) throw new TypeError("Invalid authority membership.");
-  return { version: NETWORK_VERSION, code: text(v.code, 8, ROOM_CODE_PATTERN), revision: uint(v.revision),
-    expiresAt: uint(v.expiresAt, Number.MAX_SAFE_INTEGER), phase: choice(v.phase, ["lobby", "racing", "migrating", "paused"]),
+  const series = v.series === null ? null : parseSeries(v.series);
+  if (v.series !== null && !series) throw new TypeError("Invalid circuit progress.");
+  if (series) for (const round of series.rounds) parseRoomResults(round.results);
+  const room: Room = { version: NETWORK_VERSION, code: text(v.code, 8, ROOM_CODE_PATTERN), revision: uint(v.revision),
+    expiresAt: uint(v.expiresAt, Number.MAX_SAFE_INTEGER), phase: choice(v.phase, ["lobby", "racing", "migrating", "paused", "results"]),
     hostId, authorityId, epoch: uint(v.epoch), participants, karts, config: parseLobbyConfig(v.config),
     startAt: v.startAt === null ? null : uint(v.startAt, Number.MAX_SAFE_INTEGER), seed: uint(v.seed),
     checkpoint: v.checkpoint === null ? null : parseCheckpointRef(v.checkpoint),
     pendingCheckpoint: v.pendingCheckpoint === null ? null : parseCheckpointRef(v.pendingCheckpoint),
+    round: v.round === null ? null : parseRound(v.round), series,
+    lastRound: v.lastRound === null ? null : parseCompletedRound(v.lastRound),
     reason: v.reason === null ? null : text(v.reason, 240) };
+  if ((room.phase === "lobby") !== (room.round === null) || (room.round && room.round.courseId !== room.config.course)) {
+    throw new TypeError("Round metadata does not match the room phase or course.");
+  }
+  const terminal = isTerminalRound(room);
+  if ((room.lastRound?.roundId === room.round?.id && room.round !== null && !terminal) ||
+    (terminal && room.phase !== "results" && room.phase !== "migrating")) {
+    throw new TypeError("Accepted terminal metadata cannot describe a ticking or mismatched checkpoint.");
+  }
+  if (room.phase === "results" && (!terminal || room.startAt !== null || room.pendingCheckpoint !== null)) {
+    throw new TypeError("Results require an accepted terminal checkpoint.");
+  }
+  if (room.lastRound && room.lastRound.results.some(result => result.time !== null && result.time > room.lastRound!.checkpoint.tick / 60)) {
+    throw new TypeError("A finish time exceeds the committed race tick.");
+  }
+  if (terminal && (room.lastRound!.results.length !== room.round!.roster.length ||
+    room.lastRound!.results.some(result => !room.round!.roster.some(racer => racer.id === result.id && racer.name === result.name)))) {
+    throw new TypeError("Terminal results do not match the started roster.");
+  }
+  if (series) {
+    if (room.config.mode === "quick" || series.cup !== (room.config.mode === "tour" ? "tour" : room.config.cup)) {
+      throw new TypeError("Circuit configuration changed without a reset.");
+    }
+    const latest = series.rounds.at(-1);
+    if ((latest !== undefined) !== (room.lastRound !== null) || (latest &&
+      (latest.courseId !== room.lastRound!.courseId || JSON.stringify(latest.results) !== JSON.stringify(room.lastRound!.results)))) {
+      throw new TypeError("The last completed round disagrees with circuit progress.");
+    }
+    if (room.config.course !== (terminal ? latest?.courseId : nextSeriesCourse(series))) {
+      throw new TypeError("The room skipped or repeated a circuit course.");
+    }
+  } else if (room.config.mode !== "quick" && room.round) throw new TypeError("A running circuit requires progress.");
+  return room;
 }
 export function parseServerMessage(value: unknown): ServerMessage {
   const v = object(value);

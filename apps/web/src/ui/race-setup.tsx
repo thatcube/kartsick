@@ -73,16 +73,27 @@ export function RaceSetup({ options, changeOptions, program, changeProgram, play
     <button data-pad className="game-primary start-race-button" disabled={reason !== null} onClick={start}>{circuit ? "Start circuit" : trial ? "Start time trial" : "Race!"}</button>
     <p className="panel-note">{trial ? "Random items are off. Your fixed boost allowance, best time and saved ghost are ready at the start." :
       "One screen per kart. Two people sharing a kart share the same view. The first listed player in each kart supplies its saved build."}</p>
-    <p className="development-note">Development build: Butterbell is playable. The other five courses, cups and tour are still in production, not locked content.</p>
+    <p className="development-note">Development build: {COURSES.filter(course => course.available).length} of {COURSES.length} original courses are ready to drive.
+      {" "}Handling, presentation and online play are still being refined.</p>
   </section>;
 }
 
-export function RaceResults({ race, ownKarts, message, rematch, changeRace, home, rematchLabel, rematchDisabled, changeLabel, series, nextRound }: {
-  race: RaceState; ownKarts: ReadonlySet<string>; message: string | null; rematch: () => void; changeRace: () => void; home: () => void;
+export function CircuitStandings({ series, ownKarts }: { series: SeriesProgress; ownKarts: ReadonlySet<string> }): React.JSX.Element {
+  const circuit = CUPS.find(cup => cup.id === series.cup)!;
+  const next = nextSeriesCourse(series);
+  return <section aria-label="Circuit standings"><h2>{circuit.name} / {series.rounds.length} of {circuit.courses.length}</h2>
+    <div className="record-table-wrap"><table className="record-table"><thead><tr><th>Place</th><th>Kart</th><th>Rounds</th><th>Total</th></tr></thead><tbody>
+      {seriesStandings(series).map(entry => <tr key={entry.id} data-local={ownKarts.has(entry.id)}><td>{entry.position}</td><th>{entry.name}</th>
+        <td>{entry.places.map(place => place ?? "-").join(" / ")}</td><td><strong>{entry.points}</strong></td></tr>)}
+    </tbody></table></div>{next && <p className="panel-note">Next: {COURSES.find(course => course.id === next)!.name}</p>}
+  </section>;
+}
+
+export function RaceResults({ race, ownKarts, message, rematch, changeRace, home, rematchLabel, rematchDisabled, changeLabel, series, nextRound, nextRoundDisabled }: {
+  race: { options: Pick<RaceState["options"], "courseId">; results: RaceState["results"] }; ownKarts: ReadonlySet<string>; message: string | null; rematch: () => void; changeRace: () => void; home: () => void;
   rematchLabel?: string; rematchDisabled?: boolean; changeLabel?: string;
-  series?: SeriesProgress | null; nextRound?: () => void;
+  series?: SeriesProgress | null; nextRound?: () => void; nextRoundDisabled?: boolean;
 }): React.JSX.Element {
-  const circuit = series && CUPS.find(cup => cup.id === series.cup);
   const next = series && nextSeriesCourse(series);
   return <section className="game-panel results-panel" data-game-menu aria-label="Race results">
     <header className="panel-heading"><div><p className="pit-label">{COURSES.find(course => course.id === race.options.courseId)?.name}</p><h1>That's a wrap.</h1></div></header>
@@ -92,12 +103,8 @@ export function RaceResults({ race, ownKarts, message, rematch, changeRace, home
         {(!result.finished || result.disconnected) && <small>{result.disconnected ? "Disconnected" : "Incomplete - ranked by progress"}</small>}</th>
         <td>{formatTime(result.time)}</td><td>{result.points}</td></tr>)}
     </tbody></table></div>
-    {series && circuit && <><h2>{circuit.name} / {series.rounds.length} of {circuit.courses.length}</h2>
-      <div className="record-table-wrap"><table className="record-table"><thead><tr><th>Place</th><th>Kart</th><th>Rounds</th><th>Total</th></tr></thead><tbody>
-        {seriesStandings(series).map(entry => <tr key={entry.id} data-local={ownKarts.has(entry.id)}><td>{entry.position}</td><th>{entry.name}</th>
-          <td>{entry.places.map(place => place ?? "-").join(" / ")}</td><td><strong>{entry.points}</strong></td></tr>)}
-      </tbody></table></div>{next && <p className="panel-note">Next: {COURSES.find(course => course.id === next)!.name}</p>}</>}
-    <div className="result-actions">{next && nextRound ? <button data-pad className="game-primary" onClick={nextRound}>Next course</button> :
+    {series && <CircuitStandings series={series} ownKarts={ownKarts} />}
+    <div className="result-actions">{next && nextRound ? <button data-pad className="game-primary" disabled={nextRoundDisabled} onClick={nextRound}>Next course</button> :
       <button data-pad className="game-primary" disabled={rematchDisabled} onClick={rematch}>{rematchLabel ?? (series ? "Run this circuit again" : "Race again")}</button>}
       <button data-pad onClick={changeRace}>{changeLabel ?? "Change race"}</button><button data-pad onClick={home}>Main menu</button></div>
   </section>;

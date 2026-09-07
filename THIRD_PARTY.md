@@ -17,6 +17,7 @@ when upgrading the runtime dependencies.
 |---|---|---|---|
 | Babylon.js Core | 9.23.0 | Apache-2.0 | <https://github.com/BabylonJS/Babylon.js> |
 | React and React DOM | 19.2.8 | MIT | <https://github.com/facebook/react> |
+| Pako | 2.1.0 | MIT AND Zlib | <https://github.com/nodeca/pako> |
 | Vite | 8.2.2 | MIT | <https://github.com/vitejs/vite> |
 | TypeScript | 7.0.2 | Apache-2.0 | <https://github.com/microsoft/TypeScript> |
 | Vitest | 4.1.11 | MIT | <https://github.com/vitest-dev/vitest> |
