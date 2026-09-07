@@ -1,7 +1,7 @@
 import { CHARACTERS, COURSES, ITEMS, getCourse } from "@kartsick/content";
 import type { KartBuild } from "@kartsick/content";
 import { NEUTRAL_PLAYER, RACE_LIMITS, copyRace, createKart, standings } from "@kartsick/simulation";
-import type { RaceEntry, RaceOptions, RaceState } from "@kartsick/simulation";
+import type { RaceEntry, RaceEvent, RaceOptions, RaceState } from "@kartsick/simulation";
 import type { Checkpoint, Room } from "@kartsick/protocol";
 import type { GameSettings } from "./game-controls";
 import { Soundtrack } from "./audio";
@@ -180,7 +180,7 @@ export class RaceRuntime {
     if (!this.disposed && generation === this.generation) this.setMode("menu");
   }
 
-  async startOnline(network: KartsickNetwork<RaceState>, identities: ReadonlyMap<string, string>): Promise<void> {
+  async startOnline(network: KartsickNetwork<RaceState, RaceEvent[]>, identities: ReadonlyMap<string, string>): Promise<void> {
     const generation = ++this.generation;
     this.input.clear();
     this.setMode("loading");
@@ -338,7 +338,7 @@ export class RaceRuntime {
     }
     this.roles();
     const input = this.input.poll(Math.min(elapsed, 0.05));
-    const frame = this.mode === "race" || this.mode === "paused" && this.online ? this.session.advance(elapsed, this.mode === "race" ? input : {}, race => {
+    const frame = this.mode === "race" || (this.mode === "paused" || this.mode === "results") && this.online ? this.session.advance(elapsed, this.mode === "race" ? input : {}, race => {
       if (race.phase !== "countdown") this.recorder?.sample(race.karts[0].state);
     }) : this.session.paused();
     if (this.online && this.rosterSignature !== this.rosterKey()) this.configureViews(this.localPlayerIds);

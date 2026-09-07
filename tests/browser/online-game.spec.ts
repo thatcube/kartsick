@@ -50,6 +50,10 @@ test("two browsers play the actual game, reconcile remote driving, and restore a
       return !!kart && !kart.ai && kart.state.speed > 8;
     });
     await guest.keyboard.up("w");
+    const swaps = await guest.evaluate(() => window.__KARTSICK_RACE__!.read().online!.receivedEventCounts.swap ?? 0);
+    await guest.keyboard.press("c");
+    await host.waitForFunction(() => window.__KARTSICK_RACE__?.read().race.karts[1].state.driver === 1);
+    await guest.waitForFunction(previous => (window.__KARTSICK_RACE__?.read().online?.receivedEventCounts.swap ?? 0) > previous, swaps);
     const hostState = await host.evaluate(() => window.__KARTSICK_RACE__!.read());
     const guestState = await guest.evaluate(() => window.__KARTSICK_RACE__!.read());
     expect(hostState.race.karts).toHaveLength(8);
@@ -57,6 +61,8 @@ test("two browsers play the actual game, reconcile remote driving, and restore a
     expect(guestState.online?.authority).toBe(false);
     expect(hostState.online!.maximumSnapshotBytes).toBeGreaterThan(1000);
     expect(guestState.online!.predictionTicks).toBeLessThanOrEqual(12);
+    expect(hostState.online!.eventBatchesPublished).toBeGreaterThan(0);
+    expect(guestState.online!.eventBatchesReceived).toBeGreaterThan(0);
     await guest.screenshot({ path: info.outputPath("guest-live-race.png") });
     await writeFile(info.outputPath("actual-race-network-metrics.json"), JSON.stringify({ host: hostState.online, guest: guestState.online }, null, 2));
     await guest.keyboard.press("Escape");
@@ -132,6 +138,7 @@ test("four couch controllers mix tandem and split-screen with a remote human", a
     await guest.waitForFunction(() => window.__KARTSICK_RACE__?.read().race.phase === "racing");
     expect(await host.evaluate(() => window.__KARTSICK_RACE__!.read().views.length)).toBe(3);
     expect(await guest.evaluate(() => window.__KARTSICK_RACE__!.read().views.length)).toBe(1);
+    const swaps = await guest.evaluate(() => window.__KARTSICK_RACE__!.read().online!.receivedEventCounts.swap ?? 0);
     await host.evaluate(() => {
       for (const index of [0, 1]) window.__racePads![index].buttons[3] = { value: 1, pressed: true, touched: true };
     });
@@ -145,6 +152,7 @@ test("four couch controllers mix tandem and split-screen with a remote human", a
       return kart?.state.driver === 1 && kart.state.speed > 8 && !kart.ai;
     });
     await host.evaluate(() => { window.__racePads![1].buttons[7] = { value: 0, pressed: false, touched: false }; });
+    await guest.waitForFunction(previous => (window.__KARTSICK_RACE__?.read().online?.receivedEventCounts.swap ?? 0) > previous, swaps);
     await host.screenshot({ path: info.outputPath("online-tandem-plus-split.png") });
     expect(await guest.evaluate(() => window.__KARTSICK_RACE__!.read().race.karts.flatMap(kart => kart.players.filter(Boolean)).length)).toBe(5);
     expect(errors).toEqual([]);

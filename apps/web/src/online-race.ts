@@ -1,6 +1,6 @@
 import { CHARACTERS, getCourse } from "@kartsick/content";
 import {
-  FixedClock, RACE_LIMITS, copyKart, copyRace, createRace, setRacePlayers, stepRace,
+  FixedClock, RACE_LIMITS, copyKart, copyRace, createRace, decodeRaceEvent, setRacePlayers, stepRace,
 } from "@kartsick/simulation";
 import type { KartState, PlayerInput, RaceEntry, RaceEvent, RaceState } from "@kartsick/simulation";
 import { sequenceIsNewer } from "@kartsick/protocol";
@@ -8,11 +8,24 @@ import type { Checkpoint, InputAck, PlayerInputFrame, Room } from "@kartsick/pro
 import type { KartsickNetwork, NetworkEvent } from "./network";
 import type { SessionFrame } from "./local-race";
 
-export type RacingTransport = Pick<KartsickNetwork<RaceState>,
+export type RacingTransport = Pick<KartsickNetwork<RaceState, RaceEvent[]>,
   "room" | "participantId" | "isAuthority" | "connectedPeers" | "subscribe" | "sendInputs" |
-  "drainInputs" | "pendingInputs" | "broadcastSnapshot" | "commitCheckpoint"> & {
+  "drainInputs" | "pendingInputs" | "broadcastSnapshot" | "broadcastEvent" | "commitCheckpoint" | "getSnapshotAcks"> & {
     connection: Pick<KartsickNetwork<RaceState>["connection"], "connected" | "serverNow">;
   };
+
+export function decodeRaceEventBatch(value: unknown): RaceEvent[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > RACE_LIMITS.eventsPerTick) throw new TypeError("Invalid race event batch.");
+  if (Reflect.ownKeys(value).length !== value.length + 1) throw new TypeError("Race event batches must be dense arrays.");
+  const events: RaceEvent[] = [];
+  for (let index = 0; index < value.length; index++) {
+    const entry = Object.getOwnPropertyDescriptor(value, index);
+    if (!entry?.enumerable || !Object.hasOwn(entry, "value")) throw new TypeError("Race event batches must contain data fields.");
+    events.push(decodeRaceEvent(entry.value));
+  }
+  if (events.some(event => event.tick !== events[0].tick)) throw new TypeError("Race event batches must contain one simulation tick.");
+  return events;
+}
 
 export function roomRace(room: Room): RaceState {
   if (!room.karts.some(kart => kart.seats.some(Boolean))) throw new RangeError("The room has no seated racers.");
@@ -50,6 +63,9 @@ export class OnlineRaceSession {
   private disposed = false;
   private checkpointInFlight = false;
   private checkpointTick = -60;
+  private checkpointRetryAt = 0;
+  private publishedSequence: number | null = null;
+  private lastPublishedAt = 0;
   private resumeAt = 0;
   private awaitingResumeTime = false;
   private pendingEvents: RaceEvent[] = [];
@@ -59,6 +75,9 @@ export class OnlineRaceSession {
   private bytesSent = 0;
   private bytesReceived = 0;
   private readonly peerQuality = new Map<string, { rtt: number | null; sent: number; received: number }>();
+  private eventBatchesPublished = 0;
+  private eventBatchesReceived = 0;
+  private readonly receivedEventCounts = new Map<RaceEvent["type"], number>();
   private snapshotsSent = 0;
   private snapshotsDropped = 0;
   private maximumSnapshotBytes = 0;
@@ -120,7 +139,7 @@ export class OnlineRaceSession {
     for (const id of this.applied.keys()) if (!active.has(id)) this.applied.delete(id);
     for (const id of this.queued.keys()) if (!active.has(id)) this.queued.delete(id);
   }
-  private receive(event: NetworkEvent<RaceState, never>): void {
+  private receive(event: NetworkEvent<RaceState, RaceEvent[]>): void {
     if (this.disposed) return;
     switch (event.type) {
       case "epoch":
@@ -132,6 +151,8 @@ export class OnlineRaceSession {
           this.eventKeys.clear();
           this.eventOrder.length = 0;
           this.latestSnapshot = null;
+          this.publishedSequence = null;
+          this.checkpointRetryAt = 0;
           this.remoteSamples = [];
           this.peerQuality.clear();
           this.rtt = 0;
@@ -185,6 +206,22 @@ export class OnlineRaceSession {
         break;
       case "resync":
         if (this.network.isAuthority) this.publish();
+        break;
+      case "event":
+        if (this.network.isAuthority || event.epoch !== this.epoch || this.waiting || !this.latestSnapshot) return;
+        {
+          const tick = event.event[0].tick;
+          if (tick < this.race.tick - 120 || tick > this.race.tick + 120) return;
+          const ids = new Set(this.race.karts.map(kart => kart.id));
+          if (event.event.some(item => item.kartId !== "" && !ids.has(item.kartId) ||
+            item.targetId !== undefined && !/^e\d+$/.test(item.targetId) && !ids.has(item.targetId))) {
+            this.warning("The host sent feedback for an unknown kart. That event batch was rejected.");
+            return;
+          }
+          this.eventBatchesReceived++;
+          for (const item of event.event) this.receivedEventCounts.set(item.type, (this.receivedEventCounts.get(item.type) ?? 0) + 1);
+          this.keepEvents(event.event);
+        }
         break;
       case "quality":
         {
@@ -280,9 +317,28 @@ export class OnlineRaceSession {
 
   private publish(): void {
     const result = this.network.broadcastSnapshot(this.race, this.race.tick, this.acknowledgments());
+    this.publishedSequence = result.sequence;
+    this.lastPublishedAt = this.now();
     this.snapshotsSent += result.sent;
     this.snapshotsDropped += result.dropped;
     this.maximumSnapshotBytes = Math.max(this.maximumSnapshotBytes, new TextEncoder().encode(JSON.stringify(this.race)).byteLength);
+  }
+
+  private publishCheckpoint(): void {
+    if (this.checkpointInFlight || this.now() < this.checkpointRetryAt || this.race.tick === this.checkpointTick ||
+      this.race.phase !== "finished" && this.race.tick - this.checkpointTick < 60) return;
+    this.checkpointTick = this.race.tick;
+    this.checkpointInFlight = true;
+    const epoch = this.epoch;
+    void this.network.commitCheckpoint(copyRace(this.race), this.race.tick, this.acknowledgments())
+      .catch(error => {
+        if (!this.disposed && this.epoch === epoch) {
+          this.checkpointTick = -60;
+          this.checkpointRetryAt = this.now() + 1000;
+          this.warning(`Race checkpoint could not be replicated: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      })
+      .finally(() => { this.checkpointInFlight = false; });
   }
 
   private remotePoses(): SessionFrame["remote"] {
@@ -320,6 +376,18 @@ export class OnlineRaceSession {
     const room = this.network.room;
     if (this.disposed || !room || room.phase !== "racing" || !this.network.connection.connected ||
       this.network.connection.serverNow() < this.resumeAt) { this.resetClock(); return this.paused(); }
+    if (this.race.phase === "finished" && this.finished) {
+      this.resetClock();
+      if (this.network.isAuthority) {
+        if (this.now() - this.lastPublishedAt >= 500) {
+          const acks = this.network.getSnapshotAcks();
+          if (this.publishedSequence === null || this.network.connectedPeers.some(id =>
+            !acks.has(id) || sequenceIsNewer(this.publishedSequence!, acks.get(id)!))) this.publish();
+        }
+        this.publishCheckpoint();
+      }
+      return this.takeFrame(1);
+    }
     const alpha = this.clock.advance(elapsed * (this.network.isAuthority ? 1 : this.predictionScale), () => {
       const seated = new Set(this.race.karts.flatMap(kart => kart.players));
       const samples = [...this.identities].flatMap(([local, playerId]) => seated.has(playerId) && localInputs[local] ? [{
@@ -330,15 +398,14 @@ export class OnlineRaceSession {
         this.waiting = false;
         this.remember();
         const inputs = this.authorityInputs();
-        this.keepEvents(stepRace(this.race, inputs));
-        if (this.race.tick % 3 === 0 || this.race.phase === "finished") this.publish();
-        if (this.race.tick - this.checkpointTick >= 60 && !this.checkpointInFlight) {
-          this.checkpointTick = this.race.tick;
-          this.checkpointInFlight = true;
-          void this.network.commitCheckpoint(copyRace(this.race), this.race.tick, this.acknowledgments())
-            .catch(error => this.warning(`Race checkpoint could not be replicated: ${error instanceof Error ? error.message : String(error)}`))
-            .finally(() => { this.checkpointInFlight = false; });
+        const events = stepRace(this.race, inputs);
+        this.keepEvents(events);
+        if (events.length) {
+          this.network.broadcastEvent(events);
+          this.eventBatchesPublished++;
         }
+        if (this.race.tick % 3 === 0 || this.race.phase === "finished") this.publish();
+        this.publishCheckpoint();
       } else {
         if (this.latestSnapshot && this.now() - this.latestSnapshotAt > 1000) this.waiting = true;
         if (this.waiting || !this.latestSnapshot || this.race.tick >= this.latestSnapshot.tick + 12 || this.race.phase === "finished") return;
@@ -348,9 +415,13 @@ export class OnlineRaceSession {
           if (localInputs[local]) inputs[playerId] = localInputs[local];
           else delete inputs[playerId];
         }
-        this.keepEvents(stepRace(this.race, inputs));
+        // Continuous engine/drift feedback follows prediction; discrete feedback is authoritative.
+        stepRace(this.race, inputs);
       }
     });
+    return this.takeFrame(alpha);
+  }
+  private takeFrame(alpha: number): SessionFrame {
     const events = this.pendingEvents;
     this.pendingEvents = [];
     return { race: this.race, previous: this.previous, alpha, events, remote: this.remotePoses() };
@@ -364,6 +435,8 @@ export class OnlineRaceSession {
       peers: Math.max(this.peers.size, this.network.connectedPeers.length), waiting: this.waiting,
       checkpointTick: this.network.room?.checkpoint?.tick ?? null, restoreCount: this.restoreCount,
       courseVersion: getCourse(this.race.options.courseId).version,
+      eventBatchesPublished: this.eventBatchesPublished, eventBatchesReceived: this.eventBatchesReceived,
+      receivedEventCounts: Object.fromEntries(this.receivedEventCounts),
     };
   }
   dispose(): void { this.disposed = true; this.unsubscribe(); this.queued.clear(); this.pendingEvents = []; }

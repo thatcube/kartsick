@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_BUILD } from "@kartsick/content";
 import { NEUTRAL_PLAYER, copyRace, parseRaceState, stepRace } from "@kartsick/simulation";
-import type { RaceState } from "@kartsick/simulation";
+import type { RaceEvent, RaceState } from "@kartsick/simulation";
 import { DEFAULT_LOBBY, sequenceIsNewer } from "@kartsick/protocol";
 import type { Checkpoint, InputAck, PlayerInputFrame, Room } from "@kartsick/protocol";
 import type { NetworkEvent } from "./network";
-import { OnlineRaceSession, roomRace } from "./online-race";
+import { OnlineRaceSession, decodeRaceEventBatch, roomRace } from "./online-race";
 import type { RacingTransport } from "./online-race";
 
 function room(): Room {
@@ -30,10 +30,12 @@ class Transport implements RacingTransport {
   history: PlayerInputFrame[] = [];
   snapshots: { state: RaceState; tick: number; acks: InputAck[] }[] = [];
   checkpoints: Checkpoint<RaceState>[] = [];
+  events: RaceEvent[][] = [];
+  snapshotAcks = new Map<string, number>();
   private sequences = new Map<string, number>();
-  private listeners = new Set<(event: NetworkEvent<RaceState, never>) => void>();
-  subscribe(listener: (event: NetworkEvent<RaceState, never>) => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
-  emit(event: NetworkEvent<RaceState, never>) {
+  private listeners = new Set<(event: NetworkEvent<RaceState, RaceEvent[]>) => void>();
+  subscribe(listener: (event: NetworkEvent<RaceState, RaceEvent[]>) => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
+  emit(event: NetworkEvent<RaceState, RaceEvent[]>) {
     if (event.type === "snapshot") this.history = this.history.filter(frame => {
       const ack = event.acks.find(ack => ack.playerId === frame.playerId);
       return !ack || sequenceIsNewer(frame.sequence, ack.sequence);
@@ -53,6 +55,8 @@ class Transport implements RacingTransport {
   }
   drainInputs() { const value = this.incoming; this.incoming = []; return value; }
   pendingInputs() { return structuredClone(this.history); }
+  broadcastEvent(events: RaceEvent[]) { this.events.push(decodeRaceEventBatch(events)); }
+  getSnapshotAcks() { return new Map(this.snapshotAcks); }
   broadcastSnapshot(state: RaceState, tick: number, acks: InputAck[]) {
     this.snapshots.push({ state: copyRace(state), tick, acks: structuredClone(acks) });
     return { sequence: this.snapshots.length, sent: 1, dropped: 0 };
@@ -65,6 +69,15 @@ class Transport implements RacingTransport {
 }
 
 describe("authoritative browser race integration", () => {
+  it("decodes bounded same-tick event batches without sharing their input", () => {
+    const events = [{ type: "start", kartId: "", tick: 180 }];
+    expect(decodeRaceEventBatch(events)).toEqual(events);
+    expect(decodeRaceEventBatch(events)[0]).not.toBe(events[0]);
+    for (const invalid of [null, {}, [], Array(1), Array.from({ length: 513 }, () => events[0]), [{ ...events[0], tick: NaN }],
+      [...events, { type: "swap", kartId: "one", tick: 181 }], [{ ...events[0], unknown: true }]]) {
+      expect(() => decodeRaceEventBatch(invalid)).toThrow(TypeError);
+    }
+  });
   it("keeps eight actual configured builds and both fixed tandem identities", () => {
     const value = room();
     value.config.bots = true;
@@ -204,5 +217,84 @@ describe("authoritative browser race integration", () => {
     quality("guest", 15, 10, 20);
     expect(session.metrics()).toMatchObject({ bytesSent: 490, bytesReceived: 645, rttMs: 20 });
     session.dispose();
+  });
+  it("publishes real authority events in per-tick batches and does not invent predicted client feedback", () => {
+    const authority = new Transport();
+    const host = new OnlineRaceSession(authority, new Map([["local-1", "one"]]), () => {});
+    for (let tick = 0; tick < 181; tick++) host.advance(1 / 60, { "local-1": { ...NEUTRAL_PLAYER } });
+    expect(authority.events.flat().some(event => event.type === "start")).toBe(true);
+    expect(authority.events.every(batch => batch.every(event => event.tick === batch[0].tick))).toBe(true);
+    const network = new Transport();
+    network.isAuthority = false;
+    network.participantId = "guest";
+    const warnings: string[] = [];
+    const guest = new OnlineRaceSession(network, new Map([["local-1", "two"]]), message => warnings.push(message), () => network.time);
+    network.emit({ type: "snapshot", epoch: 1, sequence: 1, tick: host.race.tick, acks: [], state: copyRace(host.race) });
+    expect(guest.advance(1 / 60, { "local-1": { ...NEUTRAL_PLAYER, swap: true } }).events).toEqual([]);
+    const swap: RaceEvent = { type: "swap", kartId: "online-kart-2", tick: host.race.tick + 1 };
+    network.emit({ type: "event", epoch: 1, sequence: 1, event: [swap] });
+    expect(guest.advance(0, {}).events).toEqual([swap]);
+    network.emit({ type: "event", epoch: 1, sequence: 2, event: [swap] });
+    expect(guest.advance(0, {}).events).toEqual([]);
+    network.emit({ type: "event", epoch: 0, sequence: 3, event: [{ ...swap, tick: swap.tick + 1 }] });
+    network.emit({ type: "event", epoch: 1, sequence: 4, event: [{ ...swap, tick: 0 }] });
+    expect(guest.advance(0, {}).events).toEqual([]);
+    network.emit({ type: "event", epoch: 1, sequence: 5, event: [{ ...swap, kartId: "not-a-racer" }] });
+    expect(warnings).toEqual(["The host sent feedback for an unknown kart. That event batch was rejected."]);
+    expect(guest.race.karts[1].players).toEqual(["two", null]);
+    host.dispose();
+    guest.dispose();
+  });
+  it("replicates completed results without more physics and retries their final snapshot until acknowledged", async () => {
+    const network = new Transport();
+    const host = new OnlineRaceSession(network, new Map([["local-1", "one"]]), () => {}, () => network.time);
+    for (let tick = 0; tick < 30000 && !host.finished; tick++) {
+      network.time += 1000 / 60;
+      host.advance(1 / 60, {});
+    }
+    expect(host.finished).toBe(true);
+    await new Promise(resolve => setImmediate(resolve));
+    const finished = copyRace(host.race);
+    const snapshots = network.snapshots.length;
+    host.advance(1 / 60, {});
+    await new Promise(resolve => setImmediate(resolve));
+    expect(network.checkpoints.at(-1)?.state.phase).toBe("finished");
+    network.time += 501;
+    host.advance(1 / 60, {});
+    expect(network.snapshots.length).toBe(snapshots + 1);
+    network.snapshotAcks.set("guest", network.snapshots.length);
+    network.time += 501;
+    host.advance(1 / 60, {});
+    expect(network.snapshots.length).toBe(snapshots + 1);
+    expect(host.race).toEqual(finished);
+    const remote = new Transport();
+    remote.isAuthority = false;
+    remote.participantId = "guest";
+    const guest = new OnlineRaceSession(remote, new Map([["local-1", "two"]]), () => {});
+    remote.emit({ type: "snapshot", epoch: 1, sequence: 1, tick: finished.tick, acks: [], state: finished });
+    const event: RaceEvent = { type: "race-finished", kartId: "", tick: finished.tick };
+    remote.emit({ type: "event", epoch: 1, sequence: 1, event: [event] });
+    expect(guest.advance(0, {}).events).toEqual([event]);
+    expect(guest.advance(0, {}).events).toEqual([]);
+    expect(guest.race.results).toEqual(finished.results);
+    host.dispose();
+    guest.dispose();
+  });
+  it("bounds checkpoint failure retries instead of flooding signaling every render frame", async () => {
+    const network = new Transport();
+    let attempts = 0;
+    network.commitCheckpoint = async () => { attempts++; throw new Error("Offline"); };
+    const warnings: string[] = [];
+    const host = new OnlineRaceSession(network, new Map([["local-1", "one"]]), message => warnings.push(message), () => network.time);
+    host.advance(1 / 60, {});
+    await new Promise(resolve => setImmediate(resolve));
+    for (let tick = 0; tick < 120; tick++) host.advance(1 / 60, {});
+    expect(attempts).toBe(1);
+    network.time = 1001;
+    host.advance(1 / 60, {});
+    await new Promise(resolve => setImmediate(resolve));
+    expect(attempts).toBe(2);
+    expect(warnings).toEqual(["Race checkpoint could not be replicated: Offline", "Race checkpoint could not be replicated: Offline"]);
+    host.dispose();
   });
 });

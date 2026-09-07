@@ -172,6 +172,19 @@ committed authority epoch plus tick/type/IDs; a returned projectile keeps its
 physical ID while changing ownership. Continuous views should come from the
 snapshot, not a replay of past spawn events.
 
+`parseRaceEvent` rejects malformed event data and returns a fresh event or null;
+`decodeRaceEvent` throws instead. Both validate the event-specific fields,
+bounded ticks/values and identifier namespaces without executing accessor
+properties. Epoch, live kart membership and delivery ordering belong to the
+network integration.
+
+The online application sends bounded same-tick event batches over reliable
+control. Clients use those authoritative discrete events for sounds and camera
+feedback, while continuous engine/drift feedback follows their predicted state.
+Old-epoch, stale and duplicate events cannot replay local effects. Final events
+can still arrive on the results screen; final snapshots retry until connected
+peers acknowledge them without advancing finished physics.
+
 ## Implemented interaction rules
 
 `ITEM_INTERACTIONS` exports explicit per-item eligibility for Velvet, Static,

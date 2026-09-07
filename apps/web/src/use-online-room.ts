@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { parseRaceState } from "@kartsick/simulation";
-import type { RaceState } from "@kartsick/simulation";
+import type { RaceEvent, RaceState } from "@kartsick/simulation";
 import type { Room } from "@kartsick/protocol";
 import type { LocalPlayer } from "./local-input";
 import { KartsickNetwork } from "./network";
 import type { RaceRuntime } from "./race-runtime";
+import { decodeRaceEventBatch } from "./online-race";
 
 interface RoomCallbacks {
   game(): RaceRuntime | null;
@@ -20,7 +21,7 @@ interface RoomCallbacks {
 export function useOnlineRoom(callbacks: RoomCallbacks) {
   const current = useRef(callbacks);
   current.current = callbacks;
-  const network = useRef<KartsickNetwork<RaceState> | null>(null);
+  const network = useRef<KartsickNetwork<RaceState, RaceEvent[]> | null>(null);
   const unsubscribe = useRef<(() => void) | null>(null);
   const alive = useRef(true);
   const busyRef = useRef(false);
@@ -46,7 +47,7 @@ export function useOnlineRoom(callbacks: RoomCallbacks) {
     await operation(async () => {
       if (network.current) throw new Error("Leave your current room before joining another.");
       const settings = {
-        names: current.current.players().map(player => player.name), decodeState: parseRaceState,
+        names: current.current.players().map(player => player.name), decodeState: parseRaceState, decodeEvent: decodeRaceEventBatch,
         stunUrls: ["127.0.0.1", "localhost"].includes(location.hostname) ? [] : undefined,
         restoreCheckpoint: (checkpoint: Parameters<RaceRuntime["restoreOnline"]>[0]) => {
           const game = current.current.game();
@@ -54,7 +55,7 @@ export function useOnlineRoom(callbacks: RoomCallbacks) {
           game.restoreOnline(checkpoint);
         },
       };
-      const value = invitation ? await KartsickNetwork.join<RaceState>(invitation, settings) : await KartsickNetwork.create<RaceState>(settings);
+      const value = invitation ? await KartsickNetwork.join<RaceState, RaceEvent[]>(invitation, settings) : await KartsickNetwork.create<RaceState, RaceEvent[]>(settings);
       if (!alive.current) { value.dispose(); return; }
       network.current = value;
       current.current.game()?.setOnlineLobby(true);
