@@ -52,6 +52,7 @@ button:focus:not(:focus-visible), canvas:focus { outline: none; }
 @keyframes loading { from { transform: scaleX(.25); } to { transform: scaleX(1); } }
 .notice { position: absolute; z-index: 8; top: 12px; left: 50%; transform: translateX(-50%); width: min(740px, 90%); display: flex; align-items: center; gap: 15px; padding: 12px 15px; color: var(--ink); background: var(--cream); border: 2px solid #eaa271; border-radius: 10px; font-size: 12px; line-height: 1.4; box-shadow: 0 5px 15px #243e6722; }
 .notice button { background: var(--ink); color: var(--cream); border-radius: 6px; padding: 8px 12px; flex-shrink: 0; }
+.notice.audio-activation { top: auto; bottom: 98px; width: min(470px, 80%); }
 .hud { display: none; position: absolute; inset: 0; pointer-events: none; text-shadow: 0 2px 4px #25375494; }
 .hud.visible { display: block; }
 .race-top { position: absolute; top: 24px; left: 30px; right: 30px; display: flex; justify-content: space-between; align-items: flex-start; }

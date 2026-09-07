@@ -46,13 +46,18 @@ export class Atelier {
     return mesh;
   }
 
-  oval(name: string, position: Triple, size: Triple, color: string, parent?: TransformNode, square = 1): Mesh {
-    const mesh = MeshBuilder.CreateSphere(name, { segments: 14, diameter: 1, updatable: square !== 1 }, this.scene);
+  oval(name: string, position: Triple, size: Triple, color: string, parent?: TransformNode, square = 1, segments = 14): Mesh {
+    const mesh = MeshBuilder.CreateSphere(name, { segments, diameter: 1, updatable: square !== 1 }, this.scene);
     if (square !== 1) {
       const positions = mesh.getVerticesData(VertexBuffer.PositionKind)!;
       for (let i = 0; i < positions.length; i++) positions[i] = Math.sign(positions[i]) * Math.abs(positions[i] * 2) ** square * 0.5;
       const normals: number[] = [];
-      VertexData.ComputeNormals(positions, mesh.getIndices()!, normals);
+      // Analytic superellipsoid normals stay smooth across the UV seam and poles.
+      for (let i = 0; i < positions.length; i += 3) {
+        const gradient = positions.slice(i, i + 3).map(value => Math.sign(value) * Math.abs(value * 2) ** (2 / square - 1));
+        const length = Math.hypot(...gradient);
+        normals.push(...gradient.map(value => value / length));
+      }
       mesh.updateVerticesData(VertexBuffer.PositionKind, positions);
       mesh.updateVerticesData(VertexBuffer.NormalKind, normals);
     }
@@ -111,17 +116,21 @@ export class Atelier {
   }
 
   sign(name: string, text: string, position: Triple, width: number, color = "#3445a8", height = width * 0.26): Mesh {
-    const texture = new DynamicTexture(name, { width: 1024, height: 256 }, this.scene, false);
-    texture.drawText(text, null, 164, "bold 102px Trebuchet MS, sans-serif", color, "#fff0bf", true);
+    const texture = new DynamicTexture(name, { width: 1024, height: 256 }, this.scene, true);
+    const context = texture.getContext();
+    context.font = "bold 102px Trebuchet MS, sans-serif";
+    const fontSize = Math.min(102, 940 / context.measureText(text).width * 102);
+    texture.drawText(text, null, 128 + fontSize * 0.35, `bold ${fontSize}px Trebuchet MS, sans-serif`, color, "#fff0bf", true);
+    texture.anisotropicFilteringLevel = 4;
     const material = new StandardMaterial(name, this.scene);
     material.diffuseTexture = texture;
     material.emissiveColor = new Color3(0.15, 0.15, 0.15);
     material.specularColor = Color3.Black();
-    material.backFaceCulling = false;
-    const sign = MeshBuilder.CreatePlane(name, { width, height, sideOrientation: Mesh.DOUBLESIDE }, this.scene);
+    const sign = MeshBuilder.CreatePlane(name, { width, height }, this.scene);
     sign.position.set(...position);
     sign.material = material;
     sign.isPickable = false;
+    this.box(name + " backing", [0, 0, 0.05], [width + 0.1, height + 0.1, 0.08], "#d0bc8d", sign);
     return sign;
   }
 

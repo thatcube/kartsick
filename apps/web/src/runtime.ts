@@ -15,12 +15,17 @@ export interface FrameSnapshot {
   dropped: number;
   renderWidth: number;
   renderHeight: number;
+  camera: { x: number; y: number; z: number; fov: number };
+  activeMeshes: number;
+  totalVertices: number;
+  feedback: { particles: number; marks: number };
 }
 export interface RuntimeCallbacks {
   mode: (mode: Mode, reason?: string) => void;
   menu: (action: MenuAction) => void;
   device: (label: string) => void;
   warning: (message: string) => void;
+  audioActivation: (needed: boolean) => void;
   rebound: () => void;
   frame: (frame: FrameSnapshot) => void;
   finished: (state: KartState) => void;
@@ -41,6 +46,7 @@ export class GameRuntime {
   private p95 = 0;
   private lastFrame = performance.now();
   private disposed = false;
+  private audioTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly observer: ResizeObserver;
 
   constructor(canvas: HTMLCanvasElement, settings: Settings, private readonly callbacks: RuntimeCallbacks) {
@@ -73,9 +79,25 @@ export class GameRuntime {
   }
 
   private activateSound(): void {
-    void this.sound.activate().catch(error => {
-      this.callbacks.warning(`Audio could not start: ${error instanceof Error ? error.message : String(error)}. Driving remains available.`);
+    if (this.audioTimer !== null) clearTimeout(this.audioTimer);
+    this.audioTimer = setTimeout(() => {
+      this.audioTimer = null;
+      if (!this.disposed && this.mode !== "paused") this.callbacks.audioActivation(!this.sound.running);
+    }, 250);
+    void this.sound.activate().then(() => {
+      if (!this.disposed) this.callbacks.audioActivation(false);
+    }).catch(error => {
+      if (!this.disposed) {
+        if (this.audioTimer !== null) clearTimeout(this.audioTimer);
+        this.audioTimer = null;
+        this.callbacks.audioActivation(false);
+        this.callbacks.warning(`Audio could not start: ${error instanceof Error ? error.message : String(error)}. Driving remains available.`);
+      }
     });
+  }
+
+  enableSound(): void {
+    this.activateSound();
   }
 
   start(): void {
@@ -97,6 +119,9 @@ export class GameRuntime {
     this.input.driving = false;
     this.input.clear();
     this.clock.reset();
+    if (this.audioTimer !== null) clearTimeout(this.audioTimer);
+    this.audioTimer = null;
+    this.callbacks.audioActivation(false);
     void this.sound.suspend().catch(error => this.callbacks.warning(`Could not suspend audio: ${String(error)}`));
     this.callbacks.mode("paused", reason);
   }
@@ -127,6 +152,13 @@ export class GameRuntime {
       state: copyKart(this.state), countdown: this.countdown,
       fps: this.view.engine.getFps(), p95: this.p95, dropped: this.clock.droppedSeconds,
       renderWidth: this.view.engine.getRenderWidth(), renderHeight: this.view.engine.getRenderHeight(),
+      camera: {
+        x: this.view.camera.position.x, y: this.view.camera.position.y,
+        z: this.view.camera.position.z, fov: this.view.camera.fov,
+      },
+      activeMeshes: this.view.scene.getActiveMeshes().length,
+      totalVertices: this.view.scene.getTotalVertices(),
+      feedback: this.view.feedbackStats,
     };
   }
 
@@ -167,14 +199,15 @@ export class GameRuntime {
         }
       });
     }
-    this.sound.update(this.state, this.mode === "driving");
-    this.view.render(this.previous, this.state, this.mode === "menu" ? { ...NEUTRAL } : input, alpha, elapsed, this.mode === "menu", this.settings);
+    this.sound.update(this.state, this.mode === "driving", input.throttle);
+    this.view.render(this.previous, this.state, this.mode === "menu" ? { ...NEUTRAL } : input, alpha, elapsed, this.mode === "menu", this.mode === "driving", this.settings);
     this.callbacks.frame(this.snapshot());
   }
 
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    if (this.audioTimer !== null) clearTimeout(this.audioTimer);
     this.view.engine.stopRenderLoop();
     this.observer.disconnect();
     this.input.dispose();

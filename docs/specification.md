@@ -22,7 +22,9 @@ retro substitute. The eight mascots should be cursed and off-model in an
 approachable classic-console way: no gross-out, slime, or grotesque monsters.
 
 Friends race entirely in a browser, with responsive online play and
-controller-operated essential flows. Intended use is noncommercial play with
+controller-operated essential flows. Controllers are the primary input target;
+keyboard support is a fallback, not the basis for controller handling approval.
+Intended use is noncommercial play with
 friends, shared through links and invitations, without monetization. This does
 not change the originality or asset-permission requirements.
 

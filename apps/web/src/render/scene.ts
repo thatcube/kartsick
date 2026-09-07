@@ -8,12 +8,13 @@ import "@babylonjs/core/Lights/Shadows/shadowGeneratorSceneComponent";
 import { Engine } from "@babylonjs/core/Engines/engine";
 import { FreeCamera } from "@babylonjs/core/Cameras/freeCamera";
 import { Scene } from "@babylonjs/core/scene";
-import { angleDifference, lerp, sampleRoad } from "@kartsick/content";
+import { angleDifference, clamp, lerp, surfaceHeight } from "@kartsick/content";
 import type { DriverInput, KartState } from "@kartsick/simulation";
 import type { Settings } from "../storage";
 import { Atelier } from "./geometry";
 import { makeKart } from "./kart";
 import { makeWorld } from "./world";
+import { DrivingFeedback } from "./feedback";
 
 export class StudyScene {
   readonly engine: Engine;
@@ -25,7 +26,10 @@ export class StudyScene {
   private readonly kart;
   private readonly world;
   private readonly contact;
+  private readonly feedback: DrivingFeedback;
   private look = new Vector3();
+  private anchor = new Vector3();
+  private followYaw = 0;
   private cameraStarted = false;
   private time = 0;
   private shake = 0;
@@ -80,6 +84,7 @@ export class StudyScene {
       contactMaterial.disableLighting = true;
       contactMaterial.emissiveColor = Color3.FromHexString("#3a5545");
       this.contact.material = contactMaterial;
+      this.feedback = new DrivingFeedback(this.scene);
       this.applySettings(settings);
     } catch (error) {
       this.engine.dispose();
@@ -100,31 +105,46 @@ export class StudyScene {
     this.shake = 1;
   }
 
-  render(previous: KartState, state: KartState, input: DriverInput, alpha: number, dt: number, menu: boolean, settings: Settings): void {
+  get feedbackStats(): { particles: number; marks: number } {
+    return this.feedback.stats;
+  }
+
+  render(previous: KartState, state: KartState, input: DriverInput, alpha: number, dt: number, menu: boolean, moving: boolean, settings: Settings): void {
     const boundedDt = Math.min(dt, 0.05);
     this.time += boundedDt;
     const x = lerp(previous.x, state.x, alpha);
     const y = lerp(previous.y, state.y, alpha);
     const z = lerp(previous.z, state.z, alpha);
     const yaw = previous.yaw + angleDifference(state.yaw, previous.yaw) * alpha;
-    const pitchStart = sampleRoad(state.roadU - 0.006);
-    const pitchEnd = sampleRoad(state.roadU + 0.006);
-    const slope = Math.atan2(pitchEnd.y - pitchStart.y, Math.hypot(pitchEnd.x - pitchStart.x, pitchEnd.z - pitchStart.z));
+    const frontHeight = surfaceHeight(x + Math.sin(yaw) * 0.8, z + Math.cos(yaw) * 0.8);
+    const backHeight = surfaceHeight(x - Math.sin(yaw) * 0.8, z - Math.cos(yaw) * 0.8);
+    const slope = Math.atan2(frontHeight - backHeight, 1.6);
+    const bodyPitch = state.mode === "ground" ? -slope : -Math.atan2(state.vy, Math.max(1, Math.abs(state.speed))) * 0.4 - input.pitch * 0.1;
     this.kart.root.position.set(x, y, z);
-    this.kart.root.rotation.set(state.mode === "glider" ? -input.pitch * 0.13 : -slope, yaw, settings.reducedMotion ? 0 : -input.steer * Math.min(Math.abs(state.speed) / 500, 0.07));
+    this.kart.root.rotation.set(
+      lerp(this.kart.root.rotation.x, bodyPitch, this.cameraStarted ? 1 - Math.exp(-boundedDt * 12) : 1),
+      yaw, settings.reducedMotion ? 0 : input.steer * Math.min(Math.abs(state.speed) / 500, 0.07),
+    );
     this.kart.root.setEnabled(state.recovery < 0.55 || Math.floor(state.tick / 4) % 2 === 0);
-    this.kart.animate(state, input, boundedDt, settings.reducedMotion);
-    const road = sampleRoad(state.roadU);
-    this.contact.position.set(x, road.y + 0.07, z);
+    this.kart.animate(state, input, moving ? boundedDt : 0, settings.reducedMotion);
+    this.contact.position.set(x, y - 0.35, z);
     this.contact.rotation.y = yaw;
     this.contact.setEnabled(state.mode === "ground");
     this.world.animate(settings.reducedMotion ? 0 : this.time);
-    const followYaw = menu ? yaw + 2.45 + (settings.reducedMotion ? 0 : Math.sin(this.time * 0.13) * 0.12) : yaw - state.driftDirection * 0.12;
-    const fx = Math.sin(followYaw);
-    const fz = Math.cos(followYaw);
-    const distance = menu ? 8.4 : 8.6 + Math.abs(state.speed) * 0.022;
-    const cameraTarget = new Vector3(x - fx * distance, y + (menu ? 3.9 : 4.35), z - fz * distance);
-    const lookTarget = new Vector3(x + fx * (menu ? 0.4 : 3.8), y + 1.25, z + fz * (menu ? 0.4 : 3.8));
+    this.feedback.update(state, this.kart.root.position, yaw, moving, settings.reducedMotion);
+    const velocityYaw = state.speed > 5 ? Math.atan2(state.vx, state.vz) : yaw;
+    const desiredYaw = menu ? yaw + 2.45 + (settings.reducedMotion ? 0 : Math.sin(this.time * 0.13) * 0.12) :
+      yaw + clamp(angleDifference(velocityYaw, yaw), -0.55, 0.55) * 0.42;
+    const snap = !this.cameraStarted || Vector3.DistanceSquared(this.anchor, this.kart.root.position) > 35 ** 2;
+    this.followYaw += angleDifference(desiredYaw, this.followYaw) * (snap ? 1 : 1 - Math.exp(-boundedDt * 9));
+    // Translation follows quickly; smoothing the whole camera adds meters of lag at speed.
+    Vector3.LerpToRef(this.anchor, this.kart.root.position, snap ? 1 : 1 - Math.exp(-boundedDt * 28), this.anchor);
+    const fx = Math.sin(this.followYaw);
+    const fz = Math.cos(this.followYaw);
+    const distance = menu ? 8.4 : 7.6 + Math.abs(state.speed) * 0.015;
+    const cameraTarget = new Vector3(this.anchor.x - fx * distance, this.anchor.y + (menu ? 3.9 : 3.65), this.anchor.z - fz * distance);
+    cameraTarget.y = Math.max(cameraTarget.y, surfaceHeight(cameraTarget.x, cameraTarget.z) + 1.25);
+    const lookTarget = new Vector3(x + fx * (menu ? 0.4 : 6.4), y + (menu ? 1.25 : 1.42), z + fz * (menu ? 0.4 : 6.4));
     if (settings.shake && !settings.reducedMotion) {
       cameraTarget.x += Math.sin(this.time * 71) * this.shake * 0.08;
       cameraTarget.y += Math.cos(this.time * 57) * this.shake * 0.055;
@@ -134,17 +154,18 @@ export class StudyScene {
       cameraTarget.x -= fz * 1.5;
       cameraTarget.z += fx * 1.5;
     }
-    const smooth = this.cameraStarted ? 1 - Math.exp(-boundedDt * 6.5) : 1;
-    Vector3.LerpToRef(this.camera.position, cameraTarget, smooth, this.camera.position);
+    const smooth = snap ? 1 : 1 - Math.exp(-boundedDt * 14);
+    this.camera.position.copyFrom(cameraTarget);
     Vector3.LerpToRef(this.look, lookTarget, smooth, this.look);
     this.camera.setTarget(this.look);
-    this.camera.fov = lerp(this.camera.fov, 0.89 + (settings.reducedMotion ? 0 : Math.abs(state.speed) * 0.001), smooth);
+    this.camera.fov = lerp(this.camera.fov, 0.89 + (settings.reducedMotion || menu ? 0 : Math.abs(state.speed) * 0.002 + (state.boost > 0 ? 0.04 : 0)), smooth);
     this.cameraStarted = true;
     this.light.position.set(x + 47, y + 83, z - 30);
     this.scene.render();
   }
 
   dispose(): void {
+    this.feedback.dispose();
     this.scene.dispose();
     this.engine.dispose();
   }

@@ -27,12 +27,20 @@ Clutch/Bramble tandem kart, manual driving, three-stage countersteer mini-turbos
 an actual glider crossing, recovery, three laps, results/restart, local best
 times, original synthesized audio, and settings/remapping.
 
-Keyboard: WASD or arrows, Space to drift, C to swap, R to recover, Escape to pause.
-Controller: left stick, triggers to accelerate/brake, right shoulder to drift,
+**Controller is the primary target:** left stick, triggers to accelerate/brake, right shoulder to drift,
 north face to swap, west face to recover, Menu/Start to pause. With default
 bindings, south/east face buttons also accelerate/brake. Pull back to float and
 push forward to dive while gliding. Select **How to drive** for the charge
 sequence and remapping.
+
+Keyboard fallback: WASD or arrows, Space to drift, C to swap, R to recover,
+Escape to pause. If the browser requires a click to unlock audio, select
+**Enable sound**; controller driving is not blocked.
+
+The second pass improves the camera, rider poses, tire feedback, course
+landmarks, shared terrain/collisions, and original music. It does not count as
+controller handling approval. Version-1 study times are retired as incomparable;
+saved settings are retained.
 
 The study pauses on focus loss or controller disconnection. There is no steering
 or acceleration assist. It currently contains one local kart, not completed

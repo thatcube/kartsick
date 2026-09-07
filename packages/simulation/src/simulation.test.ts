@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CHECKPOINTS, GAP_START, sampleRoad } from "@kartsick/content";
+import { BARNS, CHECKPOINTS, GAP_START, ORCHARD, SHOULDER_WIDTH, sampleRoad, surfaceHeight, terrainHeight } from "@kartsick/content";
 import { FixedClock, NEUTRAL, STEP, copyKart, createKart, stepKart } from "./index";
 import type { DriverInput, KartState } from "./index";
 
@@ -114,6 +114,49 @@ describe("manual vehicle simulation", () => {
     stepKart(state, drive());
     stepKart(state, drive({ swap: true }));
     expect(state.driver).toBe(0);
+  });
+
+  it("rests on the visible ridge bank instead of falling through its grass", () => {
+    const point = sampleRoad(0.55);
+    const state = movingAt(0.55, 0);
+    state.x += point.dz * (SHOULDER_WIDTH + 2);
+    state.z -= point.dx * (SHOULDER_WIDTH + 2);
+    state.y = surfaceHeight(state.x, state.z) + 0.42;
+    advance(state, drive(), 0.5);
+    expect(state.mode).toBe("ground");
+    expect(state.offRoad).toBe(true);
+    expect(state.y).toBeCloseTo(surfaceHeight(state.x, state.z) + 0.42);
+  });
+
+  it("blocks barn walls without changing the player's heading or checkpoint", () => {
+    const barn = BARNS[0];
+    const state = createKart();
+    Object.assign(state, {
+      x: barn.x, z: barn.z - 7.2, y: terrainHeight(barn.x, barn.z) + 0.42,
+      yaw: 0, vx: 0, vz: 20, speed: 20,
+    });
+    expect(stepKart(state, drive({ throttle: 1 }))).toContainEqual({ type: "collision" });
+    expect(state.z).toBeLessThan(barn.z - 7);
+    expect(state.vz).toBeLessThan(0);
+    expect(state.yaw).toBe(0);
+    expect(state.nextCheckpoint).toBe(1);
+  });
+
+  it("resolves an exact tree-center overlap to finite dry ground", () => {
+    const tree = ORCHARD[0];
+    const state = createKart();
+    Object.assign(state, { x: tree.x, z: tree.z, y: terrainHeight(tree.x, tree.z) + 0.42 });
+    expect(stepKart(state, drive())).toContainEqual({ type: "collision" });
+    expect(Math.hypot(state.x - tree.x, state.z - tree.z)).toBeGreaterThan(0.85 + tree.scale * 0.26);
+    expect([state.x, state.y, state.z, state.vx, state.vz].every(Number.isFinite)).toBe(true);
+  });
+
+  it("does not collide with a trunk while flying above it", () => {
+    const tree = ORCHARD[0];
+    const state = createKart();
+    Object.assign(state, { x: tree.x, z: tree.z, y: 25, mode: "glider" });
+    expect(stepKart(state, drive()).some(event => event.type === "collision")).toBe(false);
+    expect(state.recoveries).toBe(0);
   });
 });
 

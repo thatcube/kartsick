@@ -1,6 +1,6 @@
 import {
-  CHECKPOINTS, GAP_START, ROAD_WIDTH, STUDY, angleDifference, clamp, hasRail,
-  isGap, isWater, lerp, projectRoad, sampleRoad, terrainHeight, wrap,
+  CHECKPOINTS, GAP_START, ROAD_WIDTH, SCENERY_COLLIDERS, SHOULDER_WIDTH, STUDY, WATER_LEVEL,
+  angleDifference, clamp, hasRail, isGap, isWater, lerp, projectRoad, sampleRoad, surfaceHeight, wrap,
 } from "@kartsick/content";
 import type { RoadProjection } from "@kartsick/content";
 
@@ -56,6 +56,7 @@ export interface KartState {
   offRoad: boolean;
   wrongWay: boolean;
   recoveries: number;
+  impactCooldown: number;
 }
 
 export type DrivingEvent =
@@ -73,7 +74,7 @@ export function createKart(): KartState {
     counterCooldown: 0, boost: 0, recovery: 0, previousRecover: false,
     previousSwap: false, driver: 0, swapTime: 0, nextCheckpoint: 1,
     lap: 1, lapStart: 0, elapsed: 0, lapTimes: [], finished: false,
-    roadU: start.u, offRoad: false, wrongWay: false, recoveries: 0,
+    roadU: start.u, offRoad: false, wrongWay: false, recoveries: 0, impactCooldown: 0,
   };
 }
 
@@ -102,7 +103,60 @@ export function recoverKart(state: KartState): void {
   state.recovery = 0.65;
   state.recoveries++;
   state.roadU = recoveryPoint.u;
+  state.offRoad = false;
+  state.wrongWay = false;
+  state.impactCooldown = 0;
   clearDrift(state);
+}
+
+function impact(state: KartState, events: DrivingEvent[]): void {
+  clearDrift(state);
+  if (state.impactCooldown > 0) return;
+  state.impactCooldown = 0.18;
+  events.push({ type: "collision" });
+}
+
+function sceneryCollision(state: KartState, events: DrivingEvent[]): void {
+  const kartRadius = 0.85;
+  for (const collider of SCENERY_COLLIDERS) {
+    if (state.y - 0.42 > collider.top || state.y + 0.6 < collider.bottom) continue;
+    let dx: number;
+    let dz: number;
+    let radius = kartRadius;
+    if (collider.shape === "circle") {
+      dx = state.x - collider.x;
+      dz = state.z - collider.z;
+      radius += collider.radius;
+    } else {
+      dx = state.x - clamp(state.x, collider.x - collider.halfX, collider.x + collider.halfX);
+      dz = state.z - clamp(state.z, collider.z - collider.halfZ, collider.z + collider.halfZ);
+      if (dx === 0 && dz === 0) {
+        const xDepth = collider.halfX - Math.abs(state.x - collider.x);
+        const zDepth = collider.halfZ - Math.abs(state.z - collider.z);
+        if (xDepth < zDepth) {
+          dx = state.x >= collider.x ? 1 : -1;
+          state.x = collider.x + dx * collider.halfX;
+        } else {
+          dz = state.z >= collider.z ? 1 : -1;
+          state.z = collider.z + dz * collider.halfZ;
+        }
+        radius += 1;
+      }
+    }
+    const distance = Math.hypot(dx, dz);
+    if (distance >= radius) continue;
+    // Exact center overlap has no geometric normal; eject opposite travel.
+    const nx = distance > 0 ? dx / distance : -Math.sin(state.yaw);
+    const nz = distance > 0 ? dz / distance : -Math.cos(state.yaw);
+    state.x += nx * (radius - distance + 0.005);
+    state.z += nz * (radius - distance + 0.005);
+    const inward = state.vx * nx + state.vz * nz;
+    if (inward < 0) {
+      state.vx -= inward * nx * 1.18;
+      state.vz -= inward * nz * 1.18;
+    }
+    impact(state, events);
+  }
 }
 
 function updateProgress(state: KartState, oldX: number, oldZ: number, events: DrivingEvent[]): void {
@@ -141,8 +195,7 @@ function railCollision(state: KartState, road: RoadProjection, events: DrivingEv
   state.z = road.z + nz * (ROAD_WIDTH / 2 - 0.6);
   state.vx = (state.vx - outward * nx * 1.25) * 0.78;
   state.vz = (state.vz - outward * nz * 1.25) * 0.78;
-  clearDrift(state);
-  events.push({ type: "collision" });
+  impact(state, events);
 }
 
 export function stepKart(state: KartState, input: DriverInput): DrivingEvent[] {
@@ -153,6 +206,7 @@ export function stepKart(state: KartState, input: DriverInput): DrivingEvent[] {
   state.boost = Math.max(0, state.boost - STEP);
   state.swapTime = Math.max(0, state.swapTime - STEP);
   state.counterCooldown = Math.max(0, state.counterCooldown - STEP);
+  state.impactCooldown = Math.max(0, state.impactCooldown - STEP);
 
   if (input.recover && !state.previousRecover) {
     recoverKart(state);
@@ -176,7 +230,7 @@ export function stepKart(state: KartState, input: DriverInput): DrivingEvent[] {
   const roadBefore = projectRoad(state.x, state.z);
   const oldX = state.x;
   const oldZ = state.z;
-  const onRoad = roadBefore.separation < ROAD_WIDTH / 2 + 0.6 && !isGap(roadBefore.u);
+  const onRoad = roadBefore.separation < SHOULDER_WIDTH && !isGap(roadBefore.u);
 
   if (state.mode === "ground") {
     const forwardX = Math.sin(state.yaw);
@@ -244,10 +298,10 @@ export function stepKart(state: KartState, input: DriverInput): DrivingEvent[] {
 
   state.x += state.vx * STEP;
   state.z += state.vz * STEP;
+  sceneryCollision(state, events);
   const road = projectRoad(state.x, state.z);
-  state.offRoad = road.separation > ROAD_WIDTH / 2 + 0.6;
-  const supported = !state.offRoad && !isGap(road.u);
-  const surface = supported ? road.y : terrainHeight(state.x, state.z);
+  state.offRoad = road.separation > SHOULDER_WIDTH || isGap(road.u);
+  const surface = surfaceHeight(state.x, state.z, road);
   if (state.mode === "ground") {
     const crossedLip = roadBefore.u < GAP_START && road.u >= GAP_START && road.u < GAP_START + 0.03;
     if (crossedLip && onRoad && Math.hypot(state.vx, state.vz) > 11) {
@@ -255,7 +309,7 @@ export function stepKart(state: KartState, input: DriverInput): DrivingEvent[] {
       state.vy = TUNING.glideLaunch;
       clearDrift(state);
       events.push({ type: "launch" });
-    } else if (state.y - surface > 1.6 || isGap(road.u)) {
+    } else if (state.y - surface > 1.6) {
       state.mode = "air";
       state.vy = 0;
     } else {
@@ -269,7 +323,7 @@ export function stepKart(state: KartState, input: DriverInput): DrivingEvent[] {
     events.push({ type: "land" });
   }
 
-  if ((state.mode === "ground" && !supported && isWater(state.x, state.z)) ||
+  if ((isWater(state.x, state.z) && state.y <= WATER_LEVEL + 0.42) ||
     state.y < -12 || Math.abs(state.x) > 240 || Math.abs(state.z) > 245) {
     recoverKart(state);
     events.push({ type: "recover" });

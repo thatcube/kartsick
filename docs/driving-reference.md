@@ -23,8 +23,15 @@ Study bindings use normal browser gamepad mappings. Right trigger or south face
 button accelerates; left trigger or east face button brakes/reverses; right
 shoulder drifts; north face button swaps; west face button recovers. Left stick
 steers and controls pitch in flight. These are remappable without driving aids.
+Controllers are the primary input target. A quick keyboard functionality check
+does not stand in for controller handling feedback. Study pass 2 leaves the
+analog response and drift thresholds unchanged while refining shared camera,
+surface contact, animation, and effects.
 
 Keyboard: W/Up for acceleration, S/Down for brake/reverse, A/D or Left/Right for
 steering, Space for drift, C for swap, R for recovery, Escape for pause. In flight
 W/Up dives and S/Down pulls up. Releasing throttle on the ground never continues
 acceleration automatically.
+
+When a browser will not unlock audio from gamepad input, **Enable sound**
+provides the required click without blocking the race.

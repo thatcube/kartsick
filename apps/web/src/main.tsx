@@ -44,11 +44,12 @@ function App(): React.JSX.Element {
   const [data, setData] = useState(loaded.data);
   const saveRef = useRef(data);
   const [warning, setWarning] = useState(loaded.warning);
+  const [audioActivation, setAudioActivation] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("loading");
   const [panel, setPanel] = useState<"settings" | "controls" | null>(null);
   const [pauseReason, setPauseReason] = useState("Take a breather.");
-  const [device, setDevice] = useState("Keyboard ready / press a controller button to connect");
+  const [device, setDevice] = useState("Press a controller button to connect / keyboard also available");
   const [remap, setRemap] = useState<string | null>(null);
   const [result, setResult] = useState<KartState | null>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -115,6 +116,7 @@ function App(): React.JSX.Element {
         menu: action => actions.current(action),
         device: setDevice,
         warning: setWarning,
+        audioActivation: setAudioActivation,
         rebound() {
           setRemap(null);
           if (runtime.current) save({ ...saveRef.current, settings: structuredClone(runtime.current.settings) });
@@ -204,6 +206,7 @@ function App(): React.JSX.Element {
     <div className="cinema-shade" />
 
     {warning && <div className="notice" role="alert"><span>{warning}</span><button aria-label="Dismiss notice" onClick={() => setWarning(null)}>Close</button></div>}
+    {audioActivation && <div className="notice audio-activation" role="status"><span>Your browser needs a click to enable audio. Controller driving still works.</span><button onClick={() => runtime.current?.enableSound()}>Enable sound</button></div>}
 
     {failure ? <section className="dialog failure" role="alert">
       <p className="eyebrow">The engine could not start</p><h1>Let's get you rolling.</h1><p>{failure}</p>
@@ -241,7 +244,7 @@ function App(): React.JSX.Element {
         <polyline points={gapPath} fill="none" stroke="#f29b70" strokeWidth="5" strokeDasharray="3 4" />
         <circle data-map-dot r="7" fill="#ffd46b" stroke="#34456b" strokeWidth="3" />
       </svg>
-      <div className="rider-tag"><span className="tiny-checker" /><span data-hud="rider">Clutch driving</span><span>C / north face to swap</span></div>
+      <div className="rider-tag"><span className="tiny-checker" /><span data-hud="rider">Clutch driving</span><span>{buttonNames[data.settings.buttons.swap] ?? `Button ${data.settings.buttons.swap}`} / {data.settings.keys.swap.replace("Key", "")} to swap</span></div>
       <div className="drift-readout" role="status"><span data-hud="tell" /><strong data-hud="charge" /></div>
       <div className="speed-panel"><strong data-hud="speed">0</strong><span>km/h</span><div>LAP TIME <b data-hud="lapTime">0:00.000</b></div></div>
       <div className="frame-stats" data-hud="stats" />
@@ -254,14 +257,14 @@ function App(): React.JSX.Element {
         {panel === "controls" ? <>
           <p className="eyebrow">NO DRIVING ASSISTS. ALL YOU.</p><h2>Find your groove.</h2>
           <div className="control-explainer">
-            <article><span>01 / CORNER</span><h3>Hold drift. Turn in.</h3><p>Carry some speed, hold Space or the right shoulder, then steer into the corner.</p></article>
+            <article><span>01 / CORNER</span><h3>Hold drift. Turn in.</h3><p>Carry some speed, hold your drift button, then steer into the corner. Default: right shoulder on a controller, Space on a keyboard.</p></article>
             <article><span>02 / CHARGE</span><h3>Out. In. Repeat.</h3><p>Countersteer out of the turn, then back in. Three outward strokes charge the mini-turbo. The HUD counts each one.</p></article>
             <article><span>03 / RELEASE</span><h3>Blue means go.</h3><p>Release drift at 3 / 3 for a short boost. On the ridge, the Mapwing deploys at the marked ramp. Pull back to float; push forward to dive.</p></article>
           </div>
           {remap && <p className="remap-notice" role="status">{remap}</p>}
           <div className="bindings">
-            <section><h3>Keyboard</h3>{keyActions.map(([action, label]) => <button data-pad key={action} className="binding" onClick={() => bind("key", action, label)}><span>{label}</span><kbd>{data.settings.keys[action].replace("Key", "")}</kbd></button>)}</section>
             <section><h3>Controller</h3>{buttonActions.map(([action, label]) => <button data-pad key={action} className="binding" onClick={() => bind("button", action, label)}><span>{label}</span><kbd>{buttonNames[data.settings.buttons[action]] ?? `Button ${data.settings.buttons[action]}`}</kbd></button>)}<p className="muted">Left stick steers and pitches in flight. Menu / Start pauses. South face and east face also accelerate and brake with the default trigger bindings.</p></section>
+            <section><h3>Keyboard</h3>{keyActions.map(([action, label]) => <button data-pad key={action} className="binding" onClick={() => bind("key", action, label)}><span>{label}</span><kbd>{data.settings.keys[action].replace("Key", "")}</kbd></button>)}</section>
           </div>
           <button data-pad className="text-button" onClick={() => settings({ ...data.settings, buttons: { ...DEFAULT_SETTINGS.buttons }, keys: { ...DEFAULT_SETTINGS.keys } })}>Restore default bindings</button>
         </> : panel === "settings" ? <>
@@ -271,7 +274,7 @@ function App(): React.JSX.Element {
             ["music", "Music", 0, 1, 0.05],
             ["effects", "Engine and effects", 0, 1, 0.05],
             ["deadzone", "Stick dead zone", 0.03, 0.4, 0.01],
-            ["sensitivity", "Steering response", 0.6, 1.5, 0.05],
+            ["sensitivity", "Stick response", 0.6, 1.5, 0.05],
           ] as const).map(([key, label, min, max, step]) => <label className="setting" key={key}><span>{label}<b>{key === "sensitivity" ? `${data.settings[key].toFixed(2)}x` : `${Math.round(data.settings[key] * 100)}%`}</b></span><input data-pad aria-label={label} type="range" min={min} max={max} step={step} value={data.settings[key]} onInput={event => changeNumber(key, Number(event.currentTarget.value))} /></label>)}
           <button data-pad className="setting-toggle" onClick={() => settings({ ...data.settings, quality: qualityLevels[(qualityLevels.indexOf(data.settings.quality) + 1) % qualityLevels.length] })}><span>Render quality</span><b>{data.settings.quality}</b></button>
           {([["reducedMotion", "Reduced motion"], ["shake", "Camera shake"], ["invertPitch", "Invert flight pitch"]] as const).map(([key, label]) => <button data-pad className="setting-toggle" key={key} aria-pressed={data.settings[key]} onClick={() => toggle(key)}><span>{label}</span><b>{data.settings[key] ? "On" : "Off"}</b></button>)}
@@ -293,7 +296,7 @@ function App(): React.JSX.Element {
     {mode === "menu" && !panel && <footer className="paddock-footer">
       <span>HANDLING STUDY / ONE KART / NO ITEMS</span>
       <span>BEST LAP <b>{formatTime(data.bestLap)}</b></span>
-      <span>Desktop + keyboard or controller <a href="/licenses/" target="_blank" rel="noopener noreferrer">Credits</a></span>
+      <span>Controller-first / keyboard supported <a href="/licenses/" target="_blank" rel="noopener noreferrer">Credits</a></span>
     </footer>}
   </main>;
 }
