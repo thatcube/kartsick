@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1440" viewBox="0 0 1440 1440" role="img" aria-labelledby="title desc">
   <title id="title">Kartsick: recognizable roots, wrong proportions</title>
-  <desc id="desc">Second concept pass. Eight new character drawings with named design influences: Clutch, a stocky mechanic with enormous mustache, influenced by Mario; Bramble, a leaf-eared mapmaker influenced by Link; Pompa, a copper-haired duchess influenced by Princess Peach; Bront, a coral caiman brawler influenced by Bowser; Rivet, a magenta tenrec speedster influenced by Sonic; Pipvolt, an apricot electric jerboa influenced by Pikachu; Bollo, a blue triangular cushion creature influenced by Kirby; and Hunkle, a mint-gray orangutan in a cropped track jacket influenced by Donkey Kong. Reference characters are named, not pictured. These are unapproved concept studies, not production art.</desc>
+  <desc id="desc">Second concept pass. Eight new character drawings with named design influences: Clutch, a stocky mechanic with enormous mustache, influenced by Mario; Bramble, a leaf-eared mapmaker influenced by Link; Pompa, a copper-haired duchess influenced by Princess Peach; Bront, a coral caiman brawler influenced by Bowser; Rivet, a magenta tenrec speedster influenced by Sonic; Pipvolt, an apricot electric jerboa influenced by Pikachu; Bollo, a blue triangular cushion creature influenced by Kirby; and Hunkle, a mint-gray orangutan in a cropped track jacket influenced by Donkey Kong. Reference characters are named, not pictured. The creative direction is approved; these remain concept studies, not finished production art.</desc>
   <defs>
     <style>
       text { font-family: "Trebuchet MS", Arial, sans-serif; }
@@ -36,7 +36,7 @@
   <text x="535" y="106" fill="#F5F2E8" font-size="30" font-weight="700">Recognizable roots.</text>
   <text x="536" y="144" fill="#F5F2E8" font-size="30" font-weight="700">Wrong proportions.</text>
   <text x="1390" y="54" fill="#F5F2E8" font-size="17" text-anchor="end">CAST STUDIES / PASS 02</text>
-  <text x="1390" y="81" fill="#D5DCF8" font-size="15" text-anchor="end">For creative approval, not final assets</text>
+  <text x="1390" y="81" fill="#D5DCF8" font-size="15" text-anchor="end">Approved direction / concept studies</text>
 
   <rect x="44" y="187" width="666" height="553" rx="25" fill="url(#paper)"/>
   <rect x="730" y="187" width="666" height="553" rx="25" fill="url(#court)"/>
@@ -254,5 +254,5 @@
 
   <text x="46" y="1369" fill="#F5F2E8" font-size="18">New character proposals. Reference characters are named, not pictured.</text>
   <text x="46" y="1403" fill="#D5DCF8" font-size="16">Kartsick contributors / 2026 / CC BY 4.0 for the original concept artwork</text>
-  <text x="1394" y="1403" text-anchor="end" fill="#F5F2E8" font-size="16">All eight start unlocked. Approval still pending.</text>
+  <text x="1394" y="1403" text-anchor="end" fill="#F5F2E8" font-size="16">All eight start unlocked. Handling review is next.</text>
 </svg>

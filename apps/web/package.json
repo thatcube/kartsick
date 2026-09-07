@@ -1,0 +1,14 @@
+{
+  "name": "@kartsick/web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": {
+    "@babylonjs/core": "9.23.0",
+    "@kartsick/content": "*",
+    "@kartsick/simulation": "*",
+    "@kartsick/protocol": "*",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  }
+}

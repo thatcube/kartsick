@@ -1,11 +1,13 @@
 # Kartsick: welcome to Belltumble
 
-**Creative proposal 02 - awaiting approval.**
+**Creative direction 02 - approved for implementation.**
 
 This proposes the eight-character roster, their eight kart bodies, four shared
 signature specials, six course identities, and original art/audio direction.
-Names and designs are proposals, not finalized production assets or claims of
-trademark clearance. The approved release scope remains unchanged.
+The second direction was approved after review. The drawings remain concept
+studies, not a claim that every production asset is finished or legally cleared.
+The approved release scope remains unchanged, and the first-driving-slice
+handling checkpoint is still required before six-track expansion.
 
 ![Eight revised Kartsick character studies with explicit Mario, Link, Peach, Bowser, Sonic, Pikachu, Kirby, and Donkey Kong influence labels. All depicted characters are new proposals, not reference-game artwork or final 3D assets.](concepts/cast-lineup-v2.svg)
 
@@ -108,8 +110,8 @@ mechanic, or silently grants an unapproved permanent movement ability.
 
 Each has a distinct route identity as well as a color scheme. This is a proposal
 for the whole release, not permission to build all six before handling review.
-These course concepts are retained for review; the cast revision does not imply
-that the world or any production assets have been approved.
+These are approved course directions, not finished courses. Only the first
+Butterbell study is being built before the handling-feedback gate.
 
 | Course | Place and route | Set piece, risk, and shortcut |
 |---|---|---|
@@ -131,7 +133,7 @@ kart. Ground and flight routes merge before shared progress validation.
 
 ## The first driving slice
 
-After creative approval, build a polished **Butterbell Pastures study route**,
+Build a polished **Butterbell Pastures study route**,
 not a generic graybox labeled as the finished game. Use one fully modeled tandem
 kart and the Clutch/Bramble pair; select only the art needed for this slice.
 
@@ -227,7 +229,7 @@ volume controls, and gameplay warnings retain visual equivalents.
 
 ## Approval boundary
 
-Approve or revise this **creative direction** before production models, final
-textures, or soundtrack composition. The full release specification is already
-approved and does not need another broad interview. The driving-feel checkpoint
-remains separate. No billable relay service is authorized by creative approval.
+Creative approval has been received. The full release specification does not
+need another broad interview. The driving-feel checkpoint remains separate and
+open; do not expand all six tracks before that feedback. No billable relay
+service is authorized by creative approval.
