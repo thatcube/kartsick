@@ -1,11 +1,11 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { BODIES, CHARACTERS, COURSES, GLIDERS, ITEMS, WHEELS, combinedStats, getCourse } from "@kartsick/content";
-import { copyRace } from "@kartsick/simulation";
-import type { RaceOptions, RaceState } from "@kartsick/simulation";
+import { BODIES, CHARACTERS, COURSES, CUPS, GLIDERS, ITEMS, WHEELS, availableSeries, combinedStats, getCourse } from "@kartsick/content";
+import { appendSeriesRound, copyRace, createSeries, nextSeriesCourse, seriesMedal } from "@kartsick/simulation";
+import type { RaceOptions, RaceState, SeriesProgress } from "@kartsick/simulation";
 import type { MenuAction } from "./input";
 import type { GameSettings } from "./game-controls";
-import { freshGame, keepRecord, loadGame, recordKey, saveGame } from "./game-storage";
+import { freshGame, keepMedal, keepRecord, loadGame, recordKey, saveGame } from "./game-storage";
 import type { GameSave, PlayerProfile } from "./game-storage";
 import { GHOST_STORAGE_KEY, loadGhosts, saveGhost } from "./ghosts";
 import type { GhostRecorder } from "./ghosts";
@@ -20,6 +20,7 @@ import { ItemSymbols } from "./ui/item-icons";
 import { navigateMenu } from "./ui/menu-controls";
 import { RaceMiniMap, mapGeometry, updateRaceMap } from "./ui/minimap";
 import { RaceResults, RaceSetup } from "./ui/race-setup";
+import type { RaceProgram } from "./ui/race-setup";
 import { RecordsPanel } from "./ui/records";
 import { ControlsPanel, GameSettingsPanel } from "./ui/settings";
 import { OnlineLobby } from "./ui/online-lobby";
@@ -56,6 +57,10 @@ function App(): React.JSX.Element {
   const [pauseReason, setPauseReason] = useState("Take a breather.");
   const [remapNotice, setRemapNotice] = useState<string | null>(null);
   const [options, setOptions] = useState(defaults);
+  const [program, setProgram] = useState<RaceProgram>("quick");
+  const [series, setSeries] = useState<SeriesProgress | null>(null);
+  const seriesRef = useRef(series);
+  seriesRef.current = series;
   const [assignments, setAssignments] = useState<Record<string, number>>({ "local-1": 0, "local-2": 1, "local-3": 2, "local-4": 3 });
   const [players, setPlayers] = useState<LocalPlayer[]>(() => [{
     id: loaded.data.profiles[0].id, name: loaded.data.profiles[0].name, calibration: loaded.data.profiles[0].calibration, device: { kind: "unassigned" }, connected: true,
@@ -94,7 +99,7 @@ function App(): React.JSX.Element {
       commitPlayers(next);
     },
     connected: () => { setPage("online"); setReturnPage("online"); },
-    started: () => { setPage("home"); setResult(null); setResultMessage(null); },
+    started: () => { setPage("home"); setResult(null); setResultMessage(null); seriesRef.current = null; setSeries(null); },
     lobby: () => {
       const profile = saveRef.current.profiles.find(profile => profile.id === playersRef.current[0].id)!;
       runtime.current?.menu(profile.build, profile.name);
@@ -190,7 +195,12 @@ function App(): React.JSX.Element {
     if (!game) return;
     if (playersRef.current.length === 1 && playersRef.current[0].device.kind === "unassigned") game.input.bindKeyboard(playersRef.current[0].id);
     const entries = localEntries(saveRef.current.profiles, playersRef.current, assignments);
-    const next = { ...options, seed: seed() };
+    const circuit = CUPS.find(cup => cup.id === program);
+    if (circuit && !availableSeries(circuit.courses)) { setWarning("The circuit's remaining courses are still in production."); return; }
+    const progress = circuit ? createSeries(circuit.id) : null;
+    seriesRef.current = progress;
+    setSeries(progress);
+    const next = { ...options, courseId: progress ? nextSeriesCourse(progress)! : options.courseId, seed: seed() };
     const key = recordKey(playersRef.current[0].id, next.courseId, getCourse(next.courseId).version, next.speedClass, next.mirror);
     const ghost = ghosts.ghosts.find(ghost => ghost.key === key) ?? null;
     setResult(null);
@@ -203,6 +213,20 @@ function App(): React.JSX.Element {
     }
   }
 
+  async function nextRound(): Promise<void> {
+    const game = runtime.current, progress = seriesRef.current;
+    if (!game || !progress || !result) throw new Error("There is no completed circuit round to continue.");
+    const courseId = nextSeriesCourse(progress);
+    if (!courseId) throw new Error("This circuit is already complete.");
+    setResult(null);
+    setResultMessage(null);
+    try {
+      await game.start({ ...result.options, courseId, seed: seed() }, result.karts.map(kart => ({
+        id: kart.id, name: kart.name, build: kart.build, players: kart.players,
+      })));
+    } catch (error) { setFailure(error instanceof Error ? error.message : String(error)); game.dispose(); }
+  }
+
   function goHome(nextPage: "home" | "setup" = "home"): void {
     if (online.network.current) { void online.leave(); return; }
     const profile = saveRef.current.profiles.find(profile => profile.id === playersRef.current[0].id)!;
@@ -210,6 +234,8 @@ function App(): React.JSX.Element {
     setPage(nextPage);
     setReturnPage("home");
     setResult(null);
+    seriesRef.current = null;
+    setSeries(null);
   }
 
   finishAction.current = (race, recorder) => {
@@ -218,7 +244,18 @@ function App(): React.JSX.Element {
     const localIds = runtime.current?.localPlayerIds ?? new Set(playersRef.current.map(player => player.id));
     const own = new Set(race.karts.filter(kart => kart.players.some(id => id !== null && localIds.has(id))).map(kart => kart.id));
     if (race.options.mode === "race") {
-      save({ ...saveRef.current, races: saveRef.current.races + 1, wins: saveRef.current.wins + Number(race.results.some(result => result.position === 1 && own.has(result.id) && result.finished)) });
+      let next = { ...saveRef.current, races: saveRef.current.races + 1, wins: saveRef.current.wins + Number(race.results.some(result => result.position === 1 && own.has(result.id) && result.finished)) };
+      let medal: ReturnType<typeof seriesMedal> = null;
+      if (seriesRef.current) {
+        const progress = appendSeriesRound(seriesRef.current, race);
+        seriesRef.current = progress;
+        setSeries(progress);
+        medal = seriesMedal(progress, own);
+        if (medal) next = keepMedal(next, { cup: progress.cup, speedClass: race.options.speedClass, mirror: race.options.mirror, ...medal });
+        else if (!nextSeriesCourse(progress)) setResultMessage("Circuit complete. Finish every course and place in the top three to earn a medal.");
+      }
+      const persisted = save(next);
+      if (medal) setResultMessage(`${medal.medal[0].toUpperCase() + medal.medal.slice(1)} medal${persisted ? " saved to the trophy shelf!" : " for this visit. Browser saving is unavailable."}`);
       return;
     }
     const kart = race.karts.find(kart => own.has(kart.id));
@@ -364,8 +401,8 @@ function App(): React.JSX.Element {
       <section className="game-home" data-game-menu aria-label="Main menu"><p className="pit-label">Belltumble motor club / Development build</p>
         <h1 className="game-wordmark">KARTSICK</h1><h2>Bring a friend.<br />Blame the other driver.</h2><p>Two riders. One kart. Questionable decisions.</p>
         <nav className="home-actions">
-          <button data-pad onClick={() => { setOptions(previous => ({ ...previous, mode: "race", bots: true })); setPage("setup"); }}><span>Quick race</span><small>Up to 4 local players</small></button>
-          <button data-pad onClick={() => { setOptions(previous => ({ ...previous, mode: "time-trial", bots: false })); setPage("setup"); }}><span>Time trials</span><small>You versus your ghost</small></button>
+          <button data-pad onClick={() => { setProgram("quick"); setOptions(previous => ({ ...previous, mode: "race", bots: true })); setPage("setup"); }}><span>Quick race</span><small>Races, cups and couch play</small></button>
+          <button data-pad onClick={() => { setProgram("time-trial"); setOptions(previous => ({ ...previous, mode: "time-trial", bots: false })); setPage("setup"); }}><span>Time trials</span><small>You versus your ghost</small></button>
           <button data-pad onClick={() => { setPage("online"); setReturnPage("online"); }}><span>Online race</span><small>Invite your friends</small></button>
           <button data-pad onClick={() => showPage("garage", firstProfile.id)}><span>Garage</span><small>All riders and parts</small></button>
           <button data-pad onClick={() => showPage("records")}><span>Local records</span><small>Times and medals</small></button>
@@ -376,7 +413,9 @@ function App(): React.JSX.Element {
         <small>{BODIES.find(body => body.id === firstProfile.build.body)?.name} / {WHEELS.find(wheels => wheels.id === firstProfile.build.wheels)?.name}</small></aside>
       <footer className="game-footer"><span>Press a controller button to connect. Keyboard works too.</span><span>Original game, art and sound. <a href="?study">Driving study</a></span></footer>
     </>}
-    {overlay && page === "setup" && <RaceSetup options={options} changeOptions={setOptions} players={players} assignments={assignments}
+    {overlay && page === "setup" && <RaceSetup options={options} changeOptions={setOptions} program={program}
+      changeProgram={program => { setProgram(program); setOptions(previous => ({ ...previous, mode: program === "time-trial" ? "time-trial" : "race", bots: program !== "time-trial" })); }}
+      players={players} assignments={assignments}
       assign={(id, kart) => setAssignments(previous => ({ ...previous, [id]: kart }))} rename={(id, name) => profileChange(id, { name })}
       capture={id => runtime.current?.input.captureDevice(id)} keyboard={id => runtime.current?.input.bindKeyboard(id)} addPlayer={() => addPlayer()}
       removePlayer={id => commitPlayers(playersRef.current.filter(player => player.id !== id))}
@@ -405,6 +444,7 @@ function App(): React.JSX.Element {
         <button data-pad onClick={() => showPage("controls", firstProfile.id)}>Controls</button><button data-pad onClick={() => showPage("settings")}>Settings</button>
         <button data-pad onClick={() => goHome()}>Leave race</button></div></section>}
     {overlay && page === "home" && mode === "results" && result && <RaceResults race={result} ownKarts={ownKarts} message={resultMessage}
+      series={series} nextRound={() => void nextRound()}
       rematch={() => online.network.current ? void online.operation(() => online.network.current!.connection.returnToLobby()) : void startRace()}
       rematchLabel={online.room ? "Set up a rematch" : undefined} rematchDisabled={!!online.room && online.room.hostId !== online.network.current?.participantId}
       changeRace={() => online.room ? setPage("online") : goHome("setup")} changeLabel={online.room ? "Room" : undefined} home={() => goHome()} />}

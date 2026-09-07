@@ -11,6 +11,10 @@ shortcut-specific surfaces, moving course hazards, multiple flight zones and
 open three-sector descents; a course remains unavailable until its own geometry
 is connected. No cup is completed by repeating Butterbell.
 
+Circuit scoring and the local round/results flow are implemented but remain
+unavailable to start until all of a circuit's original courses are connected.
+Online circuit checkpoint integration is still in progress.
+
 ## Integration API
 
 Import from `@kartsick/simulation`:
@@ -274,6 +278,23 @@ reflect the same world rather than reverse track traversal.
 `COURSES`, `CUPS`, and `availableSeries` expose the approved full identities and
 schedules honestly. `getCourse` rejects the unbuilt five. Time trial creates one
 kart, no random boxes and exactly two initial boosts, using identical physics.
+
+### Circuit results
+
+`createSeries("town" | "horizon" | "tour")` starts bounded, versioned circuit
+progress. `nextSeriesCourse` returns the actual next course, or null after the
+last round. `appendSeriesRound` accepts only a completely validated finished
+race on that next course; it rejects duplicate/reordered rounds and time trials.
+`parseSeries` restores an independent copy with at most six rounds and eight
+distinct kart IDs. It checks the schedule, result positions, point values and
+complete/incomplete times without substituting other courses.
+
+`seriesStandings` totals the same `RACE_POINTS` used by individual races:
+10, 8, 6, 4, 3, 2, 1, 0. Ties use wins, completed finishes, lower total recorded
+time and finally stable ASCII kart ID. Incomplete racers retain their official
+progress-ranked points, but a local medal requires finishing every round and
+placing in the top three. `seriesMedal` returns the best eligible local medal or
+null. Medals do not unlock gameplay content.
 
 ## Validation and remaining release gates
 

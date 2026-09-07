@@ -37,6 +37,7 @@ export const RACE_LIMITS = Object.freeze({
   eventsPerTick: 512, countdownTicks: 180, finishTicks: 2700, maximumTicks: 108000,
   missingInputTicks: 30, heldCharges: 20, maximumId: 10_000_000,
 });
+export const RACE_POINTS = Object.freeze([10, 8, 6, 4, 3, 2, 1, 0] as const);
 export const STATUS_KEYS = ["stun", "grace", "invincible", "shrink", "vision", "ghost", "autopilot", "slide", "slideCooldown", "boostSteal"] as const;
 export type StatusKey = typeof STATUS_KEYS[number];
 export interface HeldItem {
@@ -270,7 +271,7 @@ export function standings(race: RaceState): RaceResult[] {
     id: k.id, name: k.name, position: index + 1, finished: k.finishTick !== null,
     disconnected: !k.bot && k.players.every((p, seat) => p === null || k.missing[seat] >= RACE_LIMITS.missingInputTicks),
     time: k.finishTick === null ? null : k.state.elapsed,
-    progress: kartProgress(k, course), points: [10, 8, 6, 4, 3, 2, 1, 0][index],
+    progress: kartProgress(k, course), points: RACE_POINTS[index],
   }));
 }
 function makeHeld(race: RaceState, item: ItemId): HeldItem {

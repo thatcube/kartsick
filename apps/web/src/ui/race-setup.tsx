@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from "react";
-import { COURSES } from "@kartsick/content";
-import type { RaceOptions, RaceState } from "@kartsick/simulation";
+import { COURSES, CUPS, availableSeries } from "@kartsick/content";
+import { nextSeriesCourse, seriesStandings } from "@kartsick/simulation";
+import type { RaceOptions, RaceState, SeriesId, SeriesProgress } from "@kartsick/simulation";
 import type { LocalPlayer } from "../local-input";
 import type { KartAssignments } from "../local-race";
 import { validNickname } from "../game-storage";
 import { formatTime } from "../storage";
 import { Choice, Toggle } from "./menu-controls";
+export type RaceProgram = "quick" | "time-trial" | SeriesId;
 
 function PlayerName({ player, rename }: { player: LocalPlayer; rename: (name: string) => void }): React.JSX.Element {
   const [name, setName] = useState(player.name);
@@ -23,22 +25,26 @@ function PlayerName({ player, rename }: { player: LocalPlayer; rename: (name: st
     {invalid && <small role="alert">Use 1-24 characters.</small>}</label>;
 }
 
-export function RaceSetup({ options, changeOptions, players, assignments, assign, rename, capture, keyboard, addPlayer, removePlayer, garage, controls, start, close }: {
+export function RaceSetup({ options, changeOptions, program, changeProgram, players, assignments, assign, rename, capture, keyboard, addPlayer, removePlayer, garage, controls, start, close }: {
   options: RaceOptions; changeOptions: (options: RaceOptions) => void; players: readonly LocalPlayer[]; assignments: KartAssignments;
+  program: RaceProgram; changeProgram: (program: RaceProgram) => void;
   assign: (playerId: string, kart: number) => void; rename: (playerId: string, name: string) => void;
   capture: (playerId: string) => void; keyboard: (playerId: string) => void; addPlayer: () => void; removePlayer: (id: string) => void;
   garage: (playerId: string) => void; controls: (playerId: string) => void; start: () => void; close: () => void;
 }): React.JSX.Element {
   const trial = options.mode === "time-trial";
+  const circuit = CUPS.find(cup => cup.id === program);
   const missing = players.some(player => !player.connected || (player.device.kind === "unassigned" && players.length > 1));
-  const reason = trial && players.length !== 1 ? "Time trials use one local player. Remove the other players or choose Quick race." :
+  const reason = circuit && !availableSeries(circuit.courses) ? "This circuit needs its remaining original courses, which are still in production. No substitute laps are used." :
+    trial && players.length !== 1 ? "Time trials use one local player. Remove the other players or choose Quick race." :
     missing ? "Connect each player's controller or assign the one keyboard." : null;
   return <section className="game-panel setup-panel" data-game-menu aria-label="Race setup">
-    <header className="panel-heading"><div><p className="pit-label">No unlocks. No waiting list.</p><h1>{trial ? "Time trial" : "Who's riding?"}</h1></div><button data-pad onClick={close}>Back</button></header>
-    <Choice label="Mode" value={options.mode} options={[{ value: "race", label: "Quick race" }, { value: "time-trial", label: "Time trial" }]}
-      change={mode => changeOptions({ ...options, mode, bots: mode === "race" })} />
-    <Choice label="Course" value={options.courseId} options={COURSES.filter(course => course.available).map(course => ({ value: course.id, label: course.name }))}
-      change={courseId => changeOptions({ ...options, courseId })} />
+    <header className="panel-heading"><div><p className="pit-label">No unlocks. No waiting list.</p><h1>{circuit?.name ?? (trial ? "Time trial" : "Who's riding?")}</h1></div><button data-pad onClick={close}>Back</button></header>
+    <Choice<RaceProgram> label="Mode" value={program} options={[{ value: "quick", label: "Quick race" }, { value: "time-trial", label: "Time trial" },
+      ...CUPS.map(cup => ({ value: cup.id, label: cup.name }))]} change={changeProgram} />
+    {circuit ? <p className="panel-note">{circuit.courses.map(id => COURSES.find(course => course.id === id)!.name).join(" / ")}. Points carry between races; finish every course and place in the top three for a medal.</p> :
+      <Choice label="Course" value={options.courseId} options={COURSES.filter(course => course.available).map(course => ({ value: course.id, label: course.name }))}
+        change={courseId => changeOptions({ ...options, courseId })} />}
     <div className="race-option-pair">
       <Choice label="Class" value={options.speedClass} options={[{ value: 50, label: "50" }, { value: 100, label: "100" }, { value: 150, label: "150" }]}
         change={speedClass => changeOptions({ ...options, speedClass })} />
@@ -64,17 +70,20 @@ export function RaceSetup({ options, changeOptions, players, assignments, assign
     })}</div>
     {players.length < 4 && !trial && <button data-pad className="game-text-button" onClick={addPlayer}>Add a local player</button>}
     {reason && <p className="panel-note" role="status">{reason}</p>}
-    <button data-pad className="game-primary start-race-button" disabled={reason !== null} onClick={start}>{trial ? "Start time trial" : "Race!"}</button>
+    <button data-pad className="game-primary start-race-button" disabled={reason !== null} onClick={start}>{circuit ? "Start circuit" : trial ? "Start time trial" : "Race!"}</button>
     <p className="panel-note">{trial ? "Random items are off. Your fixed boost allowance, best time and saved ghost are ready at the start." :
       "One screen per kart. Two people sharing a kart share the same view. The first listed player in each kart supplies its saved build."}</p>
     <p className="development-note">Development build: Butterbell is playable. The other five courses, cups and tour are still in production, not locked content.</p>
   </section>;
 }
 
-export function RaceResults({ race, ownKarts, message, rematch, changeRace, home, rematchLabel, rematchDisabled, changeLabel }: {
+export function RaceResults({ race, ownKarts, message, rematch, changeRace, home, rematchLabel, rematchDisabled, changeLabel, series, nextRound }: {
   race: RaceState; ownKarts: ReadonlySet<string>; message: string | null; rematch: () => void; changeRace: () => void; home: () => void;
   rematchLabel?: string; rematchDisabled?: boolean; changeLabel?: string;
+  series?: SeriesProgress | null; nextRound?: () => void;
 }): React.JSX.Element {
+  const circuit = series && CUPS.find(cup => cup.id === series.cup);
+  const next = series && nextSeriesCourse(series);
   return <section className="game-panel results-panel" data-game-menu aria-label="Race results">
     <header className="panel-heading"><div><p className="pit-label">{COURSES.find(course => course.id === race.options.courseId)?.name}</p><h1>That's a wrap.</h1></div></header>
     {message && <p className="result-message" role="status">{message}</p>}
@@ -83,7 +92,13 @@ export function RaceResults({ race, ownKarts, message, rematch, changeRace, home
         {(!result.finished || result.disconnected) && <small>{result.disconnected ? "Disconnected" : "Incomplete - ranked by progress"}</small>}</th>
         <td>{formatTime(result.time)}</td><td>{result.points}</td></tr>)}
     </tbody></table></div>
-    <div className="result-actions"><button data-pad className="game-primary" disabled={rematchDisabled} onClick={rematch}>{rematchLabel ?? "Race again"}</button>
+    {series && circuit && <><h2>{circuit.name} / {series.rounds.length} of {circuit.courses.length}</h2>
+      <div className="record-table-wrap"><table className="record-table"><thead><tr><th>Place</th><th>Kart</th><th>Rounds</th><th>Total</th></tr></thead><tbody>
+        {seriesStandings(series).map(entry => <tr key={entry.id} data-local={ownKarts.has(entry.id)}><td>{entry.position}</td><th>{entry.name}</th>
+          <td>{entry.places.map(place => place ?? "-").join(" / ")}</td><td><strong>{entry.points}</strong></td></tr>)}
+      </tbody></table></div>{next && <p className="panel-note">Next: {COURSES.find(course => course.id === next)!.name}</p>}</>}
+    <div className="result-actions">{next && nextRound ? <button data-pad className="game-primary" onClick={nextRound}>Next course</button> :
+      <button data-pad className="game-primary" disabled={rematchDisabled} onClick={rematch}>{rematchLabel ?? (series ? "Run this circuit again" : "Race again")}</button>}
       <button data-pad onClick={changeRace}>{changeLabel ?? "Change race"}</button><button data-pad onClick={home}>Main menu</button></div>
   </section>;
 }

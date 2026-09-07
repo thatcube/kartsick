@@ -3,6 +3,7 @@ import type { Page } from "@playwright/test";
 import { freshGame, GAME_STORAGE_KEY } from "../../apps/web/src/game-storage";
 import type { RaceRuntime } from "../../apps/web/src/race-runtime";
 import { installControllers } from "./controllers";
+import { CUPS, availableSeries } from "@kartsick/content";
 
 declare global {
   interface Window {
@@ -35,7 +36,7 @@ test("real roster garage, eight-kart race, manual controls and pause", async ({ 
   expect(build).toMatchObject({ characters: ["pompa", "bramble"], body: "gilt-trip", wheels: "button", glider: "sunfan" });
   await page.screenshot({ path: info.outputPath("garage-selected-parts.png") });
   await page.getByRole("button", { name: "Done", exact: true }).click();
-  await page.getByRole("button", { name: "Quick race Up to 4 local players" }).click();
+  await page.getByRole("button", { name: /^Quick race / }).click();
   await page.getByRole("button", { name: "Race!", exact: true }).click();
   await page.waitForFunction(() => window.__KARTSICK_RACE__?.read().race.phase === "racing");
   expect(await page.evaluate(() => window.__KARTSICK_RACE__!.read().race.karts.length)).toBe(8);
@@ -69,7 +70,7 @@ test("four controllers produce four kart cameras; tandem shares one view", async
   await page.screenshot({ path: info.outputPath("four-local-karts.png") });
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Leave race", exact: true }).click();
-  await page.getByRole("button", { name: "Quick race Up to 4 local players" }).click();
+  await page.getByRole("button", { name: /^Quick race / }).click();
   const kartChoice = page.locator(".local-player-card").nth(1).getByRole("button", { name: /^Kart/ });
   await kartChoice.focus();
   await page.keyboard.press("ArrowLeft");
@@ -109,6 +110,23 @@ test("time trials use their actual fixed boost inventory and mirrored course", a
   await page.keyboard.press("e");
   await page.waitForFunction(charges => window.__KARTSICK_RACE__!.read().race.karts[0].held.reduce((sum, item) => sum + (item?.charges ?? 0), 0) < charges, charges);
   expect(await page.evaluate(() => window.__KARTSICK_RACE__!.read().race.karts[0].state.boost)).toBeGreaterThan(0);
+});
+
+test("circuits show their original schedule and never substitute an unfinished course", async ({ page }) => {
+  await openGame(page);
+  await page.getByRole("button", { name: /^Quick race / }).click();
+  await page.getByRole("button", { name: /^Mode / }).click();
+  await page.getByRole("button", { name: /^Mode / }).click();
+  await expect(page.getByRole("heading", { name: "Town Circuit", exact: true })).toBeVisible();
+  await expect(page.getByText(/Butterbell Pastures \/ Escaluna Galleria \/ Tiltglass Arcade/)).toBeVisible();
+  if (!availableSeries(CUPS[0].courses)) {
+    await expect(page.getByRole("button", { name: "Start circuit", exact: true })).toBeDisabled();
+    await expect(page.getByText(/remaining original courses.*still in production/)).toBeVisible();
+  } else {
+    await page.getByRole("button", { name: "Start circuit", exact: true }).click();
+    await page.waitForFunction(() => window.__KARTSICK_RACE__?.read().race.phase === "racing");
+    expect(await page.evaluate(() => window.__KARTSICK_RACE__!.read().race.options.courseId)).toBe("butterbell");
+  }
 });
 
 test("a complete driven time trial saves a real ghost and renders it on rematch", async ({ page }, info) => {
