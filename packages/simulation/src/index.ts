@@ -1,8 +1,11 @@
 import {
-  CHECKPOINTS, GAP_START, ROAD_WIDTH, SCENERY_COLLIDERS, SHOULDER_WIDTH, STUDY, WATER_LEVEL,
-  angleDifference, clamp, hasRail, isGap, isWater, lerp, projectRoad, sampleRoad, surfaceHeight, wrap,
+  angleDifference, checkpointSpan, clamp, combinedStats, getCourse, lerp, nearbyFlight, roadFeatures,
 } from "@kartsick/content";
-import type { RoadProjection } from "@kartsick/content";
+import type { CourseQuery, KartBuild, RoadProjection } from "@kartsick/content";
+
+export * from "./race";
+export { getCourse } from "@kartsick/content";
+export type { CourseQuery } from "@kartsick/content";
 
 export const STEP = 1 / 60;
 export const TUNING = {
@@ -10,6 +13,36 @@ export const TUNING = {
   roadGrip: 7.8, driftGrip: 2.1, driftMinimum: 8,
   miniTurboDuration: 0.72, glideLaunch: 4.2,
 } as const;
+export interface KartTuning {
+  topSpeed: number; boostSpeed: number; acceleration: number; braking: number;
+  roadGrip: number; driftGrip: number; driftMinimum: number; miniTurboDuration: number; glideLaunch: number;
+  handling: number; offRoadSpeed: number; glideSpeed: number; glideLift: number; glideHandling: number; landing: number;
+}
+export const DEFAULT_TUNING: Readonly<KartTuning> = {
+  ...TUNING, handling: 1, offRoadSpeed: 11, glideSpeed: 1, glideLift: 1, glideHandling: 1, landing: 1,
+};
+export const SPEED_CLASSES = { 50: .8, 100: 1, 150: 1.17 } as const;
+export function tuningForBuild(build: KartBuild, speedClass: 50 | 100 | 150 = 100): KartTuning {
+  const s = combinedStats(build);
+  const speed = SPEED_CLASSES[speedClass];
+  return {
+    ...DEFAULT_TUNING, topSpeed: TUNING.topSpeed * speed * s.speed,
+    boostSpeed: TUNING.boostSpeed * speed * s.speed, acceleration: TUNING.acceleration * s.acceleration * speed,
+    braking: TUNING.braking * s.grip, roadGrip: TUNING.roadGrip * s.grip,
+    driftGrip: TUNING.driftGrip * s.grip, handling: s.handling,
+    miniTurboDuration: TUNING.miniTurboDuration / Math.sqrt(s.grip),
+    offRoadSpeed: 11 * speed * s.offRoad, glideSpeed: s.glideSpeed,
+    glideLift: s.glideLift, glideHandling: s.glideHandling, landing: s.glideLift,
+    glideLaunch: TUNING.glideLaunch * Math.sqrt(s.glideLift),
+  };
+}
+export interface StepKartOptions {
+  course?: CourseQuery;
+  tuning?: Readonly<KartTuning>;
+  /** In two-human co-op the rear rider countersteers while the driver steers/drifts. */
+  countersteer?: number;
+  time?: number;
+}
 
 export interface DriverInput {
   throttle: number;
@@ -65,8 +98,8 @@ export type DrivingEvent =
   | { type: "lap"; time: number }
   | { type: "finish"; time: number };
 
-export function createKart(): KartState {
-  const start = sampleRoad(0.006);
+export function createKart(course = getCourse()): KartState {
+  const start = course.sampleRoad(0.006);
   return {
     tick: 0, x: start.x, y: start.y + 0.42, z: start.z,
     yaw: Math.atan2(start.dx, start.dz), vx: 0, vz: 0, vy: 0, speed: 0,
@@ -88,11 +121,12 @@ function clearDrift(state: KartState): void {
   state.counterArmed = true;
 }
 
-export function recoverKart(state: KartState): void {
-  const previousGate = wrap(state.nextCheckpoint - 1, CHECKPOINTS.length);
-  const checkpoint = sampleRoad(previousGate / CHECKPOINTS.length + 0.004);
+export function recoverKart(state: KartState, course = getCourse()): void {
+  const { previous, span } = checkpointSpan(course, state.nextCheckpoint);
+  const checkpoint = course.sampleRoad(previous.u + Math.min(0.004, span * 0.25));
   // A failed flight must restart on the approach, not on a checkpoint over water.
-  const recoveryPoint = isGap(checkpoint.u) ? sampleRoad(GAP_START - 0.075) : checkpoint;
+  const flight = nearbyFlight(course, checkpoint.u);
+  const recoveryPoint = course.isGap(checkpoint.u) && flight ? course.sampleRoad(flight.start - 0.075) : checkpoint;
   state.x = recoveryPoint.x;
   state.z = recoveryPoint.z;
   state.y = recoveryPoint.y + 0.42;
@@ -116,9 +150,9 @@ function impact(state: KartState, events: DrivingEvent[]): void {
   events.push({ type: "collision" });
 }
 
-function sceneryCollision(state: KartState, events: DrivingEvent[]): void {
+function sceneryCollision(state: KartState, events: DrivingEvent[], course: CourseQuery): void {
   const kartRadius = 0.85;
-  for (const collider of SCENERY_COLLIDERS) {
+  for (const collider of course.colliders) {
     if (state.y - 0.42 > collider.top || state.y + 0.6 < collider.bottom) continue;
     let dx: number;
     let dz: number;
@@ -159,8 +193,9 @@ function sceneryCollision(state: KartState, events: DrivingEvent[]): void {
   }
 }
 
-function updateProgress(state: KartState, oldX: number, oldZ: number, events: DrivingEvent[]): void {
-  const gate = CHECKPOINTS[state.nextCheckpoint];
+export function advanceKartProgress(state: KartState, oldX: number, oldZ: number, events: DrivingEvent[], course = getCourse()): void {
+  if (state.finished || state.recovery > 0) return;
+  const gate = course.checkpoints[state.nextCheckpoint];
   const before = (oldX - gate.x) * gate.dx + (oldZ - gate.z) * gate.dz;
   const after = (state.x - gate.x) * gate.dx + (state.z - gate.z) * gate.dz;
   const crossing = after - before;
@@ -169,14 +204,17 @@ function updateProgress(state: KartState, oldX: number, oldZ: number, events: Dr
   const crossingX = lerp(oldX, state.x, t);
   const crossingZ = lerp(oldZ, state.z, t);
   const lateral = Math.abs((crossingX - gate.x) * gate.dz - (crossingZ - gate.z) * gate.dx);
-  if (lateral > (isGap(gate.u) ? 21 : ROAD_WIDTH * 0.8)) return;
-  state.nextCheckpoint = (state.nextCheckpoint + 1) % CHECKPOINTS.length;
-  if (state.nextCheckpoint !== 1) return;
+  if (lateral > (course.isGap(gate.u) ? 21 : course.roadWidth * 0.8)) return;
+  if (state.y < gate.y - 3 || state.y > gate.y + (course.isGap(gate.u) ? 18 : 12)) return;
+  const descent = course.format === "sectors";
+  const finalGate = descent && state.nextCheckpoint === course.checkpoints.length - 1;
+  if (!finalGate) state.nextCheckpoint = (state.nextCheckpoint + 1) % course.checkpoints.length;
+  if (descent ? !finalGate && !course.sectors.includes(gate.u) : state.nextCheckpoint !== 1) return;
   const time = state.elapsed - state.lapStart;
   state.lapTimes.push(time);
   state.lapStart = state.elapsed;
   events.push({ type: "lap", time });
-  if (state.lap === STUDY.laps) {
+  if (finalGate || !descent && state.lap === course.laps) {
     state.finished = true;
     events.push({ type: "finish", time: state.elapsed });
   } else {
@@ -184,21 +222,48 @@ function updateProgress(state: KartState, oldX: number, oldZ: number, events: Dr
   }
 }
 
-function railCollision(state: KartState, road: RoadProjection, events: DrivingEvent[]): void {
-  if (!hasRail(road.u) || road.separation < ROAD_WIDTH / 2 - 0.5 || road.separation > ROAD_WIDTH / 2 + 2.5) return;
+function railCollision(state: KartState, road: RoadProjection, events: DrivingEvent[], course: CourseQuery): void {
+  const features = roadFeatures(course, road);
+  if (!features.rail || road.separation < features.halfWidth - 0.5 || road.separation > features.halfWidth + 2.5) return;
   const side = Math.sign(road.lateral);
   const nx = road.dz * side;
   const nz = -road.dx * side;
   const outward = state.vx * nx + state.vz * nz;
   if (outward <= 0) return;
-  state.x = road.x + nx * (ROAD_WIDTH / 2 - 0.6);
-  state.z = road.z + nz * (ROAD_WIDTH / 2 - 0.6);
+  state.x = road.x + nx * (features.halfWidth - 0.6);
+  state.z = road.z + nz * (features.halfWidth - 0.6);
   state.vx = (state.vx - outward * nx * 1.25) * 0.78;
   state.vz = (state.vz - outward * nz * 1.25) * 0.78;
   impact(state, events);
 }
 
-export function stepKart(state: KartState, input: DriverInput): DrivingEvent[] {
+function courseHazards(state: KartState, events: DrivingEvent[], course: CourseQuery, time: number): void {
+  for (const hazard of course.hazards(time)) {
+    if (state.y - 0.42 > hazard.y + hazard.height / 2 || state.y + 0.6 < hazard.y - hazard.height / 2) continue;
+    const dx = state.x - hazard.x, dz = state.z - hazard.z;
+    const distance = Math.hypot(dx, dz), radius = hazard.radius + 0.85;
+    if (distance >= radius) continue;
+    const nx = distance > 0.001 ? dx / distance : -Math.sin(state.yaw);
+    const nz = distance > 0.001 ? dz / distance : -Math.cos(state.yaw);
+    if (hazard.kind === "gust") {
+      state.vx += nx * hazard.strength * STEP;
+      state.vz += nz * hazard.strength * STEP;
+      if (state.mode === "glider") state.vy += hazard.strength * 0.2 * STEP;
+      continue;
+    }
+    state.x += nx * (radius - distance + 0.005);
+    state.z += nz * (radius - distance + 0.005);
+    const inward = state.vx * nx + state.vz * nz;
+    const impulse = Math.max(0, -inward) * 1.25 + hazard.strength;
+    state.vx += nx * impulse;
+    state.vz += nz * impulse;
+    impact(state, events);
+  }
+}
+
+export function stepKart(state: KartState, input: DriverInput, options: StepKartOptions = {}): DrivingEvent[] {
+  const course = options.course ?? getCourse();
+  const tuning = options.tuning ?? DEFAULT_TUNING;
   const events: DrivingEvent[] = [];
   if (state.finished) return events;
   state.tick++;
@@ -209,7 +274,7 @@ export function stepKart(state: KartState, input: DriverInput): DrivingEvent[] {
   state.impactCooldown = Math.max(0, state.impactCooldown - STEP);
 
   if (input.recover && !state.previousRecover) {
-    recoverKart(state);
+    recoverKart(state, course);
     events.push({ type: "recover" });
   }
   state.previousRecover = input.recover;
@@ -227,29 +292,34 @@ export function stepKart(state: KartState, input: DriverInput): DrivingEvent[] {
   const steer = clamp(input.steer, -1, 1);
   const throttle = clamp(input.throttle, 0, 1);
   const brake = clamp(input.brake, 0, 1);
-  const roadBefore = projectRoad(state.x, state.z);
+  const roadBefore = course.projectRoad(state.x, state.z);
   const oldX = state.x;
   const oldZ = state.z;
-  const onRoad = roadBefore.separation < SHOULDER_WIDTH && !isGap(roadBefore.u);
+  const oldY = state.y;
+  const beforeFeatures = roadFeatures(course, roadBefore);
+  const onRoad = roadBefore.separation < beforeFeatures.shoulderWidth && !beforeFeatures.gap && !beforeFeatures.rough &&
+    Math.abs(state.y - 0.42 - roadBefore.y) < 2;
 
   if (state.mode === "ground") {
     const forwardX = Math.sin(state.yaw);
     const forwardZ = Math.cos(state.yaw);
     let longitudinal = state.vx * forwardX + state.vz * forwardZ;
     const previousLongitudinal = longitudinal;
-    if (input.drift && !state.driftDirection && longitudinal > TUNING.driftMinimum && Math.abs(steer) > 0.16 && onRoad) {
+    if (input.drift && !state.driftDirection && longitudinal > tuning.driftMinimum && Math.abs(steer) > 0.16 && onRoad) {
       state.driftDirection = Math.sign(steer);
       state.counterArmed = true;
+      // Reference co-op starts with the drift sparks: the rear rider supplies two counters.
+      if (options.countersteer !== undefined) state.driftCharge = 1;
     }
-    if (state.driftDirection && (!input.drift || longitudinal < TUNING.driftMinimum || !onRoad)) {
+    if (state.driftDirection && (!input.drift || longitudinal < tuning.driftMinimum || !onRoad)) {
       if (!input.drift && state.driftCharge === 3 && onRoad) {
-        state.boost = TUNING.miniTurboDuration;
+        state.boost = tuning.miniTurboDuration;
         events.push({ type: "boost" });
       }
       clearDrift(state);
     }
     if (state.driftDirection) {
-      const directional = steer * state.driftDirection;
+      const directional = clamp(options.countersteer ?? steer, -1, 1) * state.driftDirection;
       if (directional > 0.2) state.counterArmed = true;
       if (directional < -0.35 && state.counterArmed && state.counterCooldown === 0 && state.driftCharge < 3) {
         state.driftCharge++;
@@ -259,21 +329,21 @@ export function stepKart(state: KartState, input: DriverInput): DrivingEvent[] {
       }
     }
 
-    const topSpeed = state.boost > 0 ? TUNING.boostSpeed : onRoad ? TUNING.topSpeed : 11;
-    const push = state.boost > 0 ? 23 : throttle * TUNING.acceleration;
-    longitudinal += (push - (brake * (longitudinal > 0.8 ? TUNING.braking : 7))) * STEP;
+    const topSpeed = state.boost > 0 ? tuning.boostSpeed : onRoad ? tuning.topSpeed : tuning.offRoadSpeed;
+    const push = state.boost > 0 ? 23 : throttle * tuning.acceleration;
+    longitudinal += (push - (brake * (longitudinal > 0.8 ? tuning.braking : 7))) * STEP;
     longitudinal *= 1 - (throttle || state.boost > 0 ? 0.16 : 1.1) * STEP;
     if (longitudinal > topSpeed) longitudinal = Math.max(topSpeed, longitudinal - 20 * STEP);
-    longitudinal = clamp(longitudinal, -6.5, TUNING.boostSpeed);
+    longitudinal = clamp(longitudinal, -6.5, tuning.boostSpeed);
     if (Math.abs(longitudinal) < 0.06 && !throttle && !brake) longitudinal = 0;
 
     const turn = state.driftDirection
       ? state.driftDirection * 0.57 + steer * 0.63
       : steer * 1.22;
-    state.yaw += turn * clamp(Math.abs(longitudinal) / 7, 0, 1) * Math.sign(longitudinal || 1) * STEP;
+    state.yaw += turn * tuning.handling * clamp(Math.abs(longitudinal) / 7, 0, 1) * Math.sign(longitudinal || 1) * STEP;
     const targetX = Math.sin(state.yaw) * longitudinal;
     const targetZ = Math.cos(state.yaw) * longitudinal;
-    const grip = state.driftDirection ? TUNING.driftGrip : TUNING.roadGrip;
+    const grip = state.driftDirection ? tuning.driftGrip : tuning.roadGrip;
     state.vx += forwardX * (longitudinal - previousLongitudinal);
     state.vz += forwardZ * (longitudinal - previousLongitudinal);
     state.vx = lerp(state.vx, targetX, grip * STEP);
@@ -283,13 +353,13 @@ export function stepKart(state: KartState, input: DriverInput): DrivingEvent[] {
     const horizontal = Math.hypot(state.vx, state.vz);
     const pitch = clamp(input.pitch, -1, 1);
     const airspeed = state.mode === "glider"
-      ? clamp(horizontal + (-pitch * 4.5 - (horizontal - 26) * 0.3) * STEP, 9, 39)
+      ? clamp(horizontal + (-pitch * 4.5 - (horizontal - 26 * tuning.glideSpeed) * 0.3 + (state.boost > 0 ? 18 : 0)) * STEP, 9, 39 * tuning.glideSpeed)
       : horizontal * (1 - 0.12 * STEP);
-    state.yaw += steer * (state.mode === "glider" ? 0.66 : 0.38) * STEP;
+    state.yaw += steer * (state.mode === "glider" ? 0.66 * tuning.glideHandling : 0.38) * STEP;
     state.vx = lerp(state.vx, Math.sin(state.yaw) * airspeed, 3 * STEP);
     state.vz = lerp(state.vz, Math.cos(state.yaw) * airspeed, 3 * STEP);
-    if (state.mode === "glider" && airspeed > 12) {
-      state.vy += (-4.6 + pitch * 3.1 - state.vy) * 1.7 * STEP;
+    if (state.mode === "glider" && airspeed > 12 / tuning.glideLift) {
+      state.vy += (-4.6 / tuning.glideLift + pitch * 3.1 - state.vy) * 1.7 * STEP;
     } else {
       state.vy -= 9.81 * STEP;
     }
@@ -298,15 +368,21 @@ export function stepKart(state: KartState, input: DriverInput): DrivingEvent[] {
 
   state.x += state.vx * STEP;
   state.z += state.vz * STEP;
-  sceneryCollision(state, events);
-  const road = projectRoad(state.x, state.z);
-  state.offRoad = road.separation > SHOULDER_WIDTH || isGap(road.u);
-  const surface = surfaceHeight(state.x, state.z, road);
+  sceneryCollision(state, events, course);
+  courseHazards(state, events, course, options.time ?? state.tick * STEP);
+  const road = course.projectRoad(state.x, state.z);
+  const features = roadFeatures(course, road);
+  state.offRoad = road.separation > features.shoulderWidth || features.gap || features.rough;
+  const deck = course.surfaceHeight(state.x, state.z, road);
+  // A kart beneath an elevated deck must not snap upward through it.
+  const ground = course.terrainHeight(state.x, state.z);
+  const surface = oldY + 0.8 < deck && ground < deck - 0.8 ? ground : deck;
   if (state.mode === "ground") {
-    const crossedLip = roadBefore.u < GAP_START && road.u >= GAP_START && road.u < GAP_START + 0.03;
+    const crossedLip = features.gap && course.glides.some(gap =>
+      roadBefore.u < gap.start && road.u >= gap.start && road.u < gap.start + 0.03);
     if (crossedLip && onRoad && Math.hypot(state.vx, state.vz) > 11) {
       state.mode = "glider";
-      state.vy = TUNING.glideLaunch;
+      state.vy = tuning.glideLaunch;
       clearDrift(state);
       events.push({ type: "launch" });
     } else if (state.y - surface > 1.6) {
@@ -314,21 +390,25 @@ export function stepKart(state: KartState, input: DriverInput): DrivingEvent[] {
       state.vy = 0;
     } else {
       state.y = surface + 0.42;
-      railCollision(state, road, events);
+      railCollision(state, road, events, course);
     }
-  } else if (state.y <= surface + 0.42 && state.vy <= 0) {
+  } else if (state.y <= surface + 0.42 && oldY >= surface + 0.27 && state.vy <= 0) {
     state.mode = "ground";
     state.y = surface + 0.42;
+    const retention = clamp(1 - Math.max(0, -state.vy - 6 * tuning.landing) * .025, .65, 1);
+    state.vx *= retention;
+    state.vz *= retention;
     state.vy = 0;
     events.push({ type: "land" });
   }
 
-  if ((isWater(state.x, state.z) && state.y <= WATER_LEVEL + 0.42) ||
-    state.y < -12 || Math.abs(state.x) > 240 || Math.abs(state.z) > 245) {
-    recoverKart(state);
+  if ((course.isWater(state.x, state.z) && state.y <= course.waterLevel + 0.42) ||
+    state.y < course.bounds.minY || state.x < course.bounds.minX || state.x > course.bounds.maxX ||
+    state.z < course.bounds.minZ || state.z > course.bounds.maxZ) {
+    recoverKart(state, course);
     events.push({ type: "recover" });
   } else {
-    updateProgress(state, oldX, oldZ, events);
+    advanceKartProgress(state, oldX, oldZ, events, course);
     state.roadU = road.u;
   }
   state.speed = Math.hypot(state.vx, state.vz) * Math.sign(state.vx * Math.sin(state.yaw) + state.vz * Math.cos(state.yaw) || 1);

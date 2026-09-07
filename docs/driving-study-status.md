@@ -1,16 +1,19 @@
-# First driving study: status and evidence
+# Driving foundation and multiplayer: status and evidence
 
 ## Current checkpoint
 
 The specification and second creative direction are approved. A playable
-single-kart Butterbell study is available for human controller feedback. This
-is not the complete Kartsick release, a completed online vertical slice, or the
-final production art/audio package.
+single-kart Butterbell study remains available at `/?study` for controller comparison.
+The main entry runs the expanded local and direct-online development build.
+This is not the complete Kartsick release or the final production art/audio package.
 
 The initial human check used a keyboard and established basic functionality,
 not finished quality. Presentation and feel still need substantial work.
-**Controllers are the primary target.** That quick check is not controller
-handling approval and does not open the all-six-track expansion gate.
+**Controllers are the primary target.** That earlier keyboard check was not
+controller handling approval. At the later expanded-build controller checkpoint,
+the working foundation was accepted for continued development, with explicit
+feedback that every aspect still needs more work. Course production is now
+proceeding; this is not final handling, visual-quality or device certification.
 
 The study includes manual acceleration/braking/reverse, three-stage
 countersteer drifting, mini-turbos, rail contact, recovery, driver swapping,
@@ -36,6 +39,53 @@ Study version 2 retires incomparable version-1 times while preserving settings.
 Some browsers require a click for audio even after a gamepad button has started
 the race. The study now explains that condition and provides **Enable sound**
 without preventing controller driving.
+
+## Expanded local-race build
+
+The main entry includes eight-kart races with bot fill and difficulty selection,
+the complete character/part selection, item pickups and effects, solo or shared
+tandem controls, and up to four local humans. Each distinct local kart has a
+camera and HUD; three karts leave a dedicated map quadrant. A following kart
+that obstructs the camera fades in that view only, without changing collisions
+or its appearance in the other player's view.
+
+The local flow connects setup, a geometry-changing garage, calibration and
+remapping, countdown, racing, pause/reconnection choices, results and rematch.
+Time trials disable random pickups and start with a fixed boost inventory.
+Completed best runs persist independently versioned records and bounded,
+ten-hertz pose ghosts. Ghosts are rendered on rematch, not inserted into the
+race field or collision simulation.
+
+New browser coverage drives a real eight-kart race; changes characters,
+body, wheels and glider through the garage; assigns four synthetic controllers
+to four views and then to a tandem-plus-split layout; consumes actual time-trial
+boost inventory in mirror mode; and drives a complete three-lap time trial,
+saves the resulting ghost, and renders it on rematch. The retained five study
+browser scenarios also pass against the refactored shared renderer.
+These are functional observations, not human handling approval or native-GPU
+performance certification.
+
+## Integrated direct-online racing
+
+The main menu now includes room creation and invite-link/code joining, up to
+four local people per browser, explicit two-seat kart selection, shared builds,
+readiness and host-controlled starts. The running race uses the real simulation
+and renderer, not a signaling-only probe. Local prediction replays bounded
+unacknowledged inputs; remote poses interpolate buffered snapshots. Snapshots
+carry applied-input acknowledgments, and replicated checkpoints restore the
+complete race during authority handoff.
+
+An executable scenario uses two actual Chromium processes and the visible game
+UI to create/join a room, drive a guest kart through WebRTC in an eight-kart field,
+pause/resume that guest's controls while the host continues, and close the host
+page. The surviving browser restores a committed checkpoint and becomes the new
+authority without restarting the race. This does not establish cross-network,
+forced-relay, all-browser or maximum-human compatibility.
+
+The first eight-kart sample reached 14,694 bytes for an uncompressed full-state
+snapshot, before envelope overhead. It is a measurement from one local scenario,
+not a sustained bandwidth or relay-cost guarantee. Compression and representative
+maximum-occupancy traffic remain release work.
 
 ## Recorded automated coverage
 
@@ -97,13 +147,14 @@ impression, and glide control/landing. Physical Xbox, PlayStation, Switch Pro,
 and adapter coverage is still open. Synthetic gamepad tests are not substituted
 for that evidence.
 
-Only the first study is implemented. Remaining release work includes real
-browser-hosted networking and prediction/reconciliation, signaling and safe
-relay activation, real cross-network testing, full two-human tandem mechanics,
-four-player local/split-screen, all item effects/specials, bots, all modes/ghosts,
-the complete six-course/eight-character/part selection, migration/reconnection,
-target-occupancy performance, and the public deployment.
+Only Butterbell is playable. Remaining release work includes safe relay activation,
+real cross-network testing, the other five courses and cup/tour flows, broader
+audio/art production and compressed loading, broader migration/reconnection evidence,
+target-occupancy performance, and public deployment. The local core and complete
+roster now exist, but that does not establish their final balance, production
+quality, physical-controller compatibility or network acceptance.
 
-Do not expand all six tracks before handling approval. Independent networking
-and tooling can proceed while feedback is pending. No provider account has been
+The course-expansion checkpoint has now been reviewed; final handling and
+presentation remain iterative work. Independent networking and tooling continue.
+No provider account has been
 activated for billing, and no alert is being treated as a spending cap.

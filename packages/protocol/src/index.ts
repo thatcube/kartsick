@@ -1,4 +1,7 @@
 import type { DriverInput } from "@kartsick/simulation";
+export * from "./rooms.ts";
+export * from "./race.ts";
+export * from "./fragments.ts";
 
 export const PROTOCOL_VERSION = 1;
 export const ROOM_LIMITS = Object.freeze({ humans: 16, karts: 8, localHumans: 4, reconnectSeconds: 60 });

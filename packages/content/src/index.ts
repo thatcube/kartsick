@@ -1,3 +1,7 @@
+export * from "./catalog-types";
+export * from "./catalog";
+export * from "./course";
+
 export interface Point {
   x: number;
   y: number;

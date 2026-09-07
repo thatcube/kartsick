@@ -1,5 +1,5 @@
-import { clamp } from "@kartsick/content";
-import type { DrivingEvent, KartState } from "@kartsick/simulation";
+import { ITEM_IDS, clamp } from "@kartsick/content";
+import type { DrivingEvent, KartState, RaceEvent } from "@kartsick/simulation";
 import type { Settings } from "./storage";
 
 const PHRASES: readonly (readonly (number | null)[])[] = [
@@ -27,6 +27,7 @@ export class Soundtrack {
   private noise: AudioBuffer | null = null;
   private nextBeat = 0;
   private beat = 0;
+  private voices = 0;
   settings: Settings;
 
   constructor(settings: Settings) {
@@ -79,7 +80,8 @@ export class Soundtrack {
   }
 
   private note(hz: number, duration: number, gain: number, channel: GainNode, time: number, type: OscillatorType = "sine", endHz?: number): void {
-    if (!this.context) return;
+    if (!this.context || this.voices >= 48) return;
+    this.voices++;
     const oscillator = this.context.createOscillator();
     const envelope = this.context.createGain();
     oscillator.type = type;
@@ -97,11 +99,13 @@ export class Soundtrack {
     oscillator.onended = () => {
       oscillator.disconnect();
       envelope.disconnect();
+      this.voices--;
     };
   }
 
   private percussion(duration: number, gain: number, cutoff: number, channel: GainNode, time: number): void {
-    if (!this.context || !this.noise) return;
+    if (!this.context || !this.noise || this.voices >= 48) return;
+    this.voices++;
     const source = this.context.createBufferSource();
     const filter = this.context.createBiquadFilter();
     const envelope = this.context.createGain();
@@ -118,6 +122,7 @@ export class Soundtrack {
       source.disconnect();
       filter.disconnect();
       envelope.disconnect();
+      this.voices--;
     };
   }
 
@@ -167,12 +172,42 @@ export class Soundtrack {
       this.percussion(0.1, 0.2, 380, this.effects, now);
       return;
     }
+
     const melody = event.type === "charge" ? [61 + event.tier * 5] :
       event.type === "boost" ? [72, 79, 84] : event.type === "launch" ? [69, 76, 81] :
         event.type === "lap" || event.type === "finish" ? [72, 76, 79, 84] :
           event.type === "recover" ? [57, 52] :
             event.type === "swap" ? [65, 69] : [45];
     melody.forEach((note, i) => this.note(frequency(note), 0.14, 0.35, this.effects!, now + i * 0.045, "triangle"));
+  }
+
+  raceEvent(event: RaceEvent, gain = 1): void {
+    if (!this.context || this.context.state !== "running" || !this.effects) return;
+    if (event.type === "charge") { this.event({ type: "charge", tier: event.value ?? 1 }); return; }
+    if (event.type === "lap" || event.type === "finish") { this.event({ type: event.type, time: event.value ?? 0 }); return; }
+    switch (event.type) {
+      case "boost": case "launch": case "land": case "recover": case "swap": case "collision": this.event({ type: event.type }); return;
+    }
+    const now = this.context.currentTime;
+    const volume = clamp(gain, 0, 1);
+    if (event.type === "start" || event.type === "double-start" || event.type === "start-boost") {
+      [72, 79, 84].forEach((note, index) => this.note(frequency(note), 0.2, 0.23 * volume, this.effects!, now + index * 0.07, "triangle"));
+    } else if (event.type === "pickup" || event.type === "pass" || event.type === "steal") {
+      this.note(frequency(event.type === "steal" ? 65 : 81), 0.18, 0.24 * volume, this.effects, now, "sine", frequency(88));
+    } else if (event.type === "item-used") {
+      const identity = event.item ? ITEM_IDS.indexOf(event.item) : 0;
+      const note = 48 + identity % 12 * 2;
+      this.note(frequency(note), 0.18, 0.24 * volume, this.effects, now, identity % 3 === 0 ? "triangle" : "sine", frequency(note + 7));
+      this.note(frequency(note + 12), 0.12, 0.12 * volume, this.effects, now + 0.055, "triangle");
+    } else if (event.type === "hit") {
+      this.percussion(0.17, 0.25 * volume, 520, this.effects, now);
+      this.note(170, 0.2, 0.25 * volume, this.effects, now, "triangle", 45);
+    } else if (event.type === "blocked" || event.type === "reflect" || event.type === "deflect") {
+      this.note(880, 0.16, 0.21 * volume, this.effects, now, "sine", 1320);
+      this.note(1320, 0.08, 0.12 * volume, this.effects, now + 0.04);
+    } else if (event.type === "slide") {
+      this.percussion(0.13, 0.1 * volume, 2300, this.effects, now);
+    }
   }
 
   async suspend(): Promise<void> {

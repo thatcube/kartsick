@@ -1,7 +1,12 @@
 # Third-party software
 
-No third-party game art, character assets, music, voice samples, or downloaded
-fonts are included in the driving study. The following direct software
+No third-party game art, character assets, music, or voice samples are included.
+Atkinson Hyperlegible Regular and Bold are bundled, unmodified, from
+[Google Fonts](https://github.com/google/fonts/tree/main/ofl/atkinsonhyperlegible).
+Copyright 2020 Braille Institute of America; SIL Open Font License 1.1.
+The complete font notice is in `apps/web/public/licenses/atkinson-hyperlegible.txt`.
+
+The following direct software
 dependencies retain their licenses; the lockfile records exact installations.
 Their license and notice files remain in their distributed packages.
 The deployable site also includes exact runtime license copies in

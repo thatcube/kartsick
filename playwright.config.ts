@@ -1,5 +1,9 @@
 import { defineConfig } from "@playwright/test";
 
+const port = Number(process.env.KARTSICK_TEST_PORT ?? 4174);
+if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new RangeError("KARTSICK_TEST_PORT must be an integer from 1024 to 65535.");
+const origin = `http://127.0.0.1:${port}`;
+
 export default defineConfig({
   testDir: "./tests/browser",
   outputDir: "./test-results",
@@ -9,14 +13,14 @@ export default defineConfig({
   retries: 0,
   reporter: "list",
   use: {
-    baseURL: "http://127.0.0.1:4174",
+    baseURL: origin,
     viewport: { width: 1440, height: 900 },
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },
   webServer: {
-    command: "node node_modules/vite/bin/vite.js --config apps/web/vite.config.ts --host 127.0.0.1 --port 4174 --strictPort",
-    url: "http://127.0.0.1:4174",
+    command: `node node_modules/vite/bin/vite.js --config apps/web/vite.config.ts --host 127.0.0.1 --port ${port} --strictPort`,
+    url: origin,
     reuseExistingServer: false,
     timeout: 30_000,
   },

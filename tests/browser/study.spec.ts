@@ -20,7 +20,7 @@ declare global {
 }
 
 async function openStudy(page: Page): Promise<void> {
-  await page.goto("/");
+  await page.goto("/?study");
   await expect(page.locator(".mode-menu, .failure")).toBeVisible();
   const failure = page.locator(".failure");
   if (await failure.isVisible()) throw new Error(await failure.innerText());

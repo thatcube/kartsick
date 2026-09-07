@@ -1,0 +1,4 @@
+{
+  "extends": "../../tsconfig.json",
+  "include": ["src", "../web/src/network", "../../packages/protocol/src", "../../tests/browser/network.spec.ts"]
+}

@@ -246,7 +246,7 @@ export function makeWorld(art: Atelier): StudyWorld {
       }
     }
   }
-  roadsideSign(art, "ORCHARD LEFT", 0.115, 1, 5.5);
+  roadsideSign(art, "ORCHARD BEND", 0.115, 1, 5.5);
   roadsideSign(art, "BARN BEND", 0.27, -1);
   roadsideSign(art, "WINDMILL RIDGE", 0.46, -1, 6);
   roadsideSign(art, "GLIDE AHEAD", GAP_START - 0.055, 1, 5.5);

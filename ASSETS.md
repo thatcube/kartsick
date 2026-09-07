@@ -15,10 +15,13 @@ endorsement or a trademark clearance claim.
 |---|---|---|---|
 | `docs/concepts/cast-lineup-v2.svg` | Approved direction; concept art, not finished 3D assets | New, hand-authored vector paths created for this repository; reference characters are named as design influences but not pictured. No imported images, game assets, external fonts, or paid generation | CC BY 4.0 for the original artwork; no rights in third-party characters or marks are granted |
 | Character, kart, world, and special-item designs in `docs/creative-proposal.md` | Approved creative direction | Original written concepts created from the approved brief; not derived from a prior implementation | CC BY 4.0 |
-| `apps/web/src/render/kart.ts` | First driving-study models | Original procedural Clutch, Bramble, Boiler Bug, Picnic wheels, and Mapwing models, with rigging and material definitions. Recreated at runtime from editable source | Visual designs/generated art: CC BY 4.0; implementation code: MIT |
+| `apps/web/src/render/kart.ts`, `render/characters/`, and `render/parts/` | Playable roster and modular kart models | Original procedural models for the eight approved characters, eight bodies, six wheel sets, four gliders, paints and decals. Rigging and geometry are recreated at runtime from editable source | Visual designs/generated art: CC BY 4.0; implementation code: MIT |
+| `apps/web/src/render/items.ts` | Item and pickup visuals | Original models for standard items, triple variants and four signature specials; no imported meshes or textures | Visual designs/generated art: CC BY 4.0; implementation code: MIT |
 | `apps/web/src/render/world.ts` and `packages/content/src/index.ts` | Butterbell study environment | Original spline layout, continuous banks, barnyards, windmill, orchard, hay bales, flowers, signs, road texture, and scenic geometry. Textures are generated locally, without external images | Visual designs/generated art: CC BY 4.0; implementation code: MIT |
 | `apps/web/src/render/feedback.ts` | Driving feedback | Original procedural tire-particle texture and bounded fading rubber marks; no imported sprites or effects | Visual designs/generated art: CC BY 4.0; implementation code: MIT |
-| `apps/web/src/audio.ts` | Study audio, not the complete soundtrack | Original eight-bar score, synthesized melody/bass/chords/percussion, engine harmonics and interaction sounds. Generated through Web Audio; no recordings, imported samples, cloned voices, or external services | Musical/sound designs and generated audio: CC BY 4.0; implementation code: MIT |
+| `apps/web/src/audio.ts` | Local race audio, not the complete six-course soundtrack | Original eight-bar score, synthesized melody/bass/chords/percussion, engine harmonics, item and interaction sounds. Generated through Web Audio with a bounded transient voice count; no recordings, imported samples, cloned voices, or external services | Musical/sound designs and generated audio: CC BY 4.0; implementation code: MIT |
+| `apps/web/src/ui/item-icons.tsx` | Original item icon set | Hand-authored SVG paths for standard items, variants, and four signature specials | Visual designs/generated art: CC BY 4.0; implementation code: MIT |
+| `apps/web/public/fonts/AtkinsonHyperlegible-Regular.ttf` and `AtkinsonHyperlegible-Bold.ttf` | Bundled interface fonts | Unmodified Atkinson Hyperlegible, copyright 2020 Braille Institute of America; downloaded from [Google Fonts](https://github.com/google/fonts/tree/main/ofl/atkinsonhyperlegible). Verified Git blobs: regular `b3cc4200fcf09d600eac74002ab4ea65b404a536`; bold `ca3f613847de62b8da83d2dab500ec391c8fe477` | SIL Open Font License 1.1; exact notice in `apps/web/public/licenses/atkinson-hyperlegible.txt` |
 
 The SVG is its own editable source. Study models, textures, and sounds are
 reproducible from their TypeScript source with `npm ci` and `npm run build`;
@@ -27,8 +30,8 @@ The reusable construction helpers are in `apps/web/src/render/geometry.ts`.
 The complete release still needs its broader art/audio production and compressed
 asset export/loading pipeline.
 
-No downloaded font files or third-party art have been added. The interface uses
-the browser's locally available system fonts. Supporting software is listed in
+The bundled fonts retain their own license, rather than the game's art license.
+There is no downloaded third-party game art. Supporting software is listed in
 [THIRD_PARTY.md](THIRD_PARTY.md); it retains its own licenses.
 
 The second cast proposal replaces the first study. Its named reference anchors

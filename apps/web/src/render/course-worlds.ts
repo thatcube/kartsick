@@ -1,0 +1,12 @@
+import type { CourseId } from "@kartsick/content";
+import type { Atelier } from "./geometry";
+import { makeWorld } from "./world";
+import type { CourseWorld } from "./world-types";
+
+export function makeCourseWorld(art: Atelier, id: CourseId): CourseWorld {
+  if (id === "butterbell") {
+    const world = makeWorld(art);
+    return { casters: world.casters, animate: (time, reducedMotion) => world.animate(reducedMotion ? 0 : time) };
+  }
+  throw new RangeError(`The ${id} world has not been connected yet.`);
+}

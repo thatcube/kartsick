@@ -1,0 +1,22 @@
+{
+  "name": "@kartsick/signaling",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { "./local": "./src/local.ts", "./room": "./src/room.ts" },
+  "scripts": {
+    "dev": "vite --config ../web/vite.config.ts --host 127.0.0.1 --port 4173 --strictPort",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "worker:check": "wrangler deploy --dry-run --outdir .worker-check"
+  },
+  "dependencies": {
+    "@kartsick/protocol": "*",
+    "@kartsick/content": "*",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250801.0",
+    "@types/ws": "^8.18.1",
+    "wrangler": "^4.0.0"
+  }
+}

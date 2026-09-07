@@ -1,4 +1,4 @@
-import { GAP_END, angleDifference, clamp, sampleRoad } from "@kartsick/content";
+import { GAP_END, angleDifference, clamp, getCourse, sampleRoad } from "@kartsick/content";
 import type { KartState } from "@kartsick/simulation";
 
 let frame = 0;
@@ -60,4 +60,33 @@ export function startDriftPilot(): void {
       pad.axes[0] = phase % 2 === 0 && state.driftCharge < 3 ? 0.4 : -1;
     }
   });
+}
+
+export function startFullRacePilot(): void {
+  stopPilot();
+  if (!window.__testPad) throw new Error("The race pilot requires its own synthetic controller.");
+  const deadline = performance.now() + 165_000;
+  function step(): void {
+    const snapshot = window.__KARTSICK_RACE__?.read();
+    if (!snapshot || performance.now() > deadline || snapshot.race.phase === "finished") { stopPilot(); return; }
+    const state = snapshot.race.karts.find(kart => kart.players.includes("local-1"))?.state;
+    if (!state) throw new Error("The race pilot has no local kart.");
+    const course = getCourse(snapshot.race.options.courseId, snapshot.race.options.mirror);
+    const flying = state.mode === "glider";
+    const target = course.sampleRoad(flying ? Math.max(state.roadU + 0.025, course.gapEnd + 0.008) : state.roadU + 0.025);
+    const error = angleDifference(Math.atan2(target.x - state.x, target.z - state.z), state.yaw);
+    const near = course.sampleRoad(state.roadU);
+    const ahead = course.sampleRoad(state.roadU + 0.03);
+    const turn = Math.abs(angleDifference(Math.atan2(ahead.dx, ahead.dz), Math.atan2(near.dx, near.dz)));
+    const desired = turn > 0.6 ? 14 : turn > 0.32 ? 19 : 26;
+    const steer = clamp(error * 2.5, -1, 1);
+    const pad = window.__testPad!;
+    pad.axes[0] = steer === 0 ? 0 : steer * 0.86 + Math.sign(steer) * 0.14;
+    pad.buttons[7].value = state.speed < desired ? 1 : 0;
+    pad.buttons[6].value = state.speed > desired + 2 ? 0.25 : 0;
+    pad.buttons[7].pressed = pad.buttons[7].value > 0.5;
+    pad.buttons[6].pressed = pad.buttons[6].value > 0.5;
+    frame = requestAnimationFrame(step);
+  }
+  frame = requestAnimationFrame(step);
 }

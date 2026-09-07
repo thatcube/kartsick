@@ -10,6 +10,8 @@ import { VertexBuffer } from "@babylonjs/core/Buffers/buffer";
 import type { Scene } from "@babylonjs/core/scene";
 
 export type Triple = readonly [number, number, number];
+/** Height, half width, half depth, optional horizontal and depth offsets. */
+export type Contour = readonly [number, number, number, number?, number?];
 
 export class Atelier {
   private materials = new Map<string, StandardMaterial>();
@@ -101,6 +103,74 @@ export class Atelier {
     return this.place(this.mesh(name, positions, indices), [0, 0, 0], this.material(color), parent);
   }
 
+  /** Smooth, closed artist-authored cross sections; useful for anatomy, fabric and enamel. */
+  sculpt(name: string, contours: readonly Contour[], color: string, parent: TransformNode, square = 1, sides = 20): Mesh {
+    const positions: number[] = [];
+    const indices: number[] = [];
+    const uvs: number[] = [];
+    const rows = (contours.length - 1) * 3;
+    const component = (row: number, axis: number) => contours[Math.max(0, Math.min(contours.length - 1, row))][axis] ?? 0;
+    for (let row = 0; row <= rows; row++) {
+      const segment = Math.min(contours.length - 2, Math.floor(row / 3));
+      const t = row / 3 - segment;
+      const values = Array.from({ length: 5 }, (_, axis) => {
+        const a = component(segment - 1, axis), b = component(segment, axis);
+        const c = component(segment + 1, axis), d = component(segment + 2, axis);
+        return 0.5 * (2 * b + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t * t + (-a + 3 * b - 3 * c + d) * t * t * t);
+      });
+      for (let side = 0; side <= sides; side++) {
+        const angle = side / sides * Math.PI * 2;
+        const x = Math.cos(angle), z = Math.sin(angle);
+        positions.push(values[3] + Math.sign(x) * Math.abs(x) ** square * Math.max(0.001, values[1]),
+          values[0], values[4] + Math.sign(z) * Math.abs(z) ** square * Math.max(0.001, values[2]));
+        uvs.push(side / sides, row / rows);
+        if (row < rows && side < sides) {
+          const a = row * (sides + 1) + side, b = a + sides + 1;
+          indices.push(a, a + 1, b, a + 1, b + 1, b);
+        }
+      }
+    }
+    for (const row of [0, rows]) {
+      const ring = row * (sides + 1), center = positions.length / 3;
+      const contour = contours[row === 0 ? 0 : contours.length - 1];
+      positions.push(contour[3] ?? 0, contour[0], contour[4] ?? 0);
+      uvs.push(0.5, row / rows);
+      for (let side = 0; side < sides; side++) {
+        if (row === 0) indices.push(center, ring + side + 1, ring + side);
+        else indices.push(center, ring + side, ring + side + 1);
+      }
+    }
+    const mesh = this.mesh(name, positions, indices, undefined, uvs);
+    const normals = mesh.getVerticesData(VertexBuffer.NormalKind)!;
+    // Cross-section UV seams share one smooth normal, rather than a visible lighting stripe.
+    for (let row = 0; row <= rows; row++) {
+      const a = row * (sides + 1) * 3, b = a + sides * 3;
+      const n = new Vector3(normals[a] + normals[b], normals[a + 1] + normals[b + 1], normals[a + 2] + normals[b + 2]).normalize();
+      for (const index of [a, b]) { normals[index] = n.x; normals[index + 1] = n.y; normals[index + 2] = n.z; }
+    }
+    mesh.setVerticesData(VertexBuffer.NormalKind, normals);
+    return this.place(mesh, [0, 0, 0], this.material(color), parent);
+  }
+
+  /** Rounded, tapering spline; radius values correspond to the supplied control points. */
+  sweep(name: string, points: readonly Triple[], radii: readonly number[], color: string, parent: TransformNode, sides = 8): Mesh {
+    const path: Vector3[] = [];
+    const radius: number[] = [];
+    const at = (i: number) => new Vector3(...points[Math.max(0, Math.min(points.length - 1, i))]);
+    for (let i = 0; i < points.length - 1; i++) {
+      for (let step = 0; step < 4; step++) {
+        const t = step / 4;
+        path.push(Vector3.CatmullRom(at(i - 1), at(i), at(i + 1), at(i + 2), t));
+        radius.push(radii[i] + (radii[i + 1] - radii[i]) * t);
+      }
+    }
+    path.push(at(points.length - 1));
+    radius.push(radii[radii.length - 1]);
+    return this.place(MeshBuilder.CreateTube(name, {
+      path, radiusFunction: i => radius[i], tessellation: sides, cap: Mesh.CAP_ALL,
+    }, this.scene), [0, 0, 0], this.material(color), parent);
+  }
+
   mesh(name: string, positions: number[], indices: number[], colors?: number[], uvs?: number[]): Mesh {
     const mesh = new Mesh(name, this.scene);
     const data = new VertexData();
@@ -151,15 +221,43 @@ export class Atelier {
     return batches;
   }
 
-  batchModel(root: TransformNode, animated: ReadonlySet<Mesh>): void {
+  batchModel(root: TransformNode, animated: ReadonlySet<Mesh>, vertexColors = false): void {
     const groups = new Map<TransformNode, Map<StandardMaterial, Mesh[]>>();
     for (const mesh of root.getChildMeshes()) {
       if (!(mesh instanceof Mesh) || animated.has(mesh) ||
         !(mesh.parent instanceof TransformNode) || !(mesh.material instanceof StandardMaterial)) continue;
+      let batchMaterial = mesh.material;
+      if (vertexColors && mesh.material.alpha === 1 && mesh.material.getActiveTextures().length === 0 &&
+        mesh.material.backFaceCulling && !mesh.hasVertexAlpha && !mesh.material.wireframe &&
+        !mesh.material.pointsCloud && mesh.material.ambientColor.equalsFloats(0, 0, 0) &&
+        mesh.material.emissiveColor.equals(mesh.material.disableLighting ? mesh.material.diffuseColor : Color3.Black())) {
+        const source = mesh.material;
+        const color = source.diffuseColor;
+        const existing = mesh.getVerticesData(VertexBuffer.ColorKind);
+        const colors: number[] = [];
+        for (let i = 0; i < mesh.getTotalVertices(); i++) {
+          colors.push(color.r * (existing?.[i * 4] ?? 1), color.g * (existing?.[i * 4 + 1] ?? 1),
+            color.b * (existing?.[i * 4 + 2] ?? 1), 1);
+        }
+        mesh.setVerticesData(VertexBuffer.ColorKind, colors);
+        const key = `vertex:${source.disableLighting}:${source.specularColor.toHexString()}:${source.specularPower}`;
+        let shared = this.materials.get(key);
+        if (!shared) {
+          shared = new StandardMaterial(key, this.scene);
+          shared.diffuseColor = Color3.White();
+          shared.specularColor = source.specularColor.clone();
+          shared.specularPower = source.specularPower;
+          shared.disableLighting = source.disableLighting;
+          shared.emissiveColor = source.disableLighting ? Color3.White() : Color3.Black();
+          this.materials.set(key, shared);
+        }
+        mesh.material = shared;
+        batchMaterial = shared;
+      }
       const materials = groups.get(mesh.parent) ?? new Map<StandardMaterial, Mesh[]>();
-      const meshes = materials.get(mesh.material) ?? [];
+      const meshes = materials.get(batchMaterial) ?? [];
       meshes.push(mesh);
-      materials.set(mesh.material, meshes);
+      materials.set(batchMaterial, meshes);
       groups.set(mesh.parent, materials);
     }
     for (const [parent, materials] of groups) {
@@ -171,6 +269,7 @@ export class Atelier {
         // MergeMeshes bakes world space; bring the result back into its animated rig.
         batch.bakeTransformIntoVertices(inverse);
         batch.parent = parent;
+        batch.name = `${parent.name}:rigid:${batch.material?.name ?? "solid"}`;
         batch.isPickable = false;
       }
     }
