@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { CUPS } from "@kartsick/content";
 import type { GameSave } from "../game-storage";
 import { formatTime } from "../storage";
 import { Choice } from "./menu-controls";
@@ -13,7 +14,7 @@ export function RecordsPanel({ save, close, courseNames, ghostKeys }: {
     <div className="career-totals"><div><strong>{save.races}</strong><span>Races</span></div><div><strong>{save.wins}</strong><span>Wins</span></div><div><strong>{save.medals.length}</strong><span>Cup medals</span></div></div>
     <h2>Cup medals</h2>
     {save.medals.length ? <div className="medal-shelf">{save.medals.map(medal => <article key={`${medal.cup}-${medal.speedClass}-${medal.mirror}`} data-medal={medal.medal}>
-      <span aria-hidden="true">&#9733;</span><strong>{medal.medal[0].toUpperCase() + medal.medal.slice(1)}</strong><b>{medal.cup === "town" ? "Town Circuit" : medal.cup === "horizon" ? "Horizon Circuit" : "Grand Tour"}</b>
+      <span aria-hidden="true">&#9733;</span><strong>{medal.medal[0].toUpperCase() + medal.medal.slice(1)}</strong><b>{CUPS.find(cup => cup.id === medal.cup)!.name}</b>
       <small>{medal.speedClass} / {medal.mirror ? "Mirror" : "Normal"} / {medal.points} points</small>
     </article>)}</div> : <p className="panel-note">Finish a cup to put something on the shelf. Medals celebrate results; no parts or courses are locked behind them.</p>}
     <h2>Time trials</h2>

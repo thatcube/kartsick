@@ -567,7 +567,7 @@ Escaluna and Tiltglass, retains 30 kart-slot points, saves a gold medal, and
 explicitly resets via rematch. Its local counter records only its two played
 rounds. No finish ticks, checkpoints, progress or substitute schedules are
 injected. This one-kart tandem/circuit case does not establish full-occupancy
-rendered circuits, Horizon/tour completion or physical-controller acceptance.
+rendered circuits, online Horizon/tour completion or physical-controller acceptance.
 
 Terminal regression coverage also freezes input acknowledgments when a
 multi-step render frame finishes partway through its callbacks, commits an

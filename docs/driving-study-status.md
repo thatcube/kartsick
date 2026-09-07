@@ -65,6 +65,15 @@ browser scenarios also pass against the refactored shared renderer.
 These are functional observations, not human handling approval or native-GPU
 performance certification.
 
+Local Town, Horizon and Belltumble Tour browser runs now complete all twelve
+scheduled races through ordinary synthetic-controller input. Their journals
+record 344 ordered checkpoints, no recovery inputs or automatic AI takeover,
+and saved 30/30/60-point gold medals. They cover cumulative standings, natural
+finishes, course transitions, explicit rematch restart and medal persistence
+after reload. These are 100-class, normal-orientation, one-kart races with bots
+disabled through the regular setup UI; they do not establish full-field circuit
+balance or physical-controller compatibility.
+
 ## Authored course expansion
 
 All six original courses are connected to the actual simulation and renderer:
@@ -218,7 +227,7 @@ and adapter coverage is still open. Synthetic gamepad tests are not substituted
 for that evidence.
 
 All six courses are playable. Remaining release work includes safe relay activation,
-real cross-network testing, complete cup/tour browser evidence,
+real cross-network testing, online Horizon/tour and full-field circuit evidence,
 audio/art refinement and compressed loading, broader migration/reconnection evidence,
 target-occupancy performance, and public deployment. The local core and complete
 roster now exist, but that does not establish their final balance, production
