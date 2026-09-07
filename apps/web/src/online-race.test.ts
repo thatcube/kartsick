@@ -163,4 +163,46 @@ describe("authoritative browser race integration", () => {
     expect(session.race.tick).toBe(13);
     session.dispose();
   });
+  it("resumes a restored race at the shared server time, not each browser's restoration time", () => {
+    const network = new Transport();
+    const session = new OnlineRaceSession(network, new Map([["local-1", "one"]]), () => {});
+    for (let tick = 0; tick < 12; tick++) session.advance(1 / 60, {});
+    const checkpoint: Checkpoint<RaceState> = {
+      reference: { id: "committed", tick: session.race.tick, digest: "0".repeat(64), acks: [] },
+      state: copyRace(session.race),
+    };
+    network.room.phase = "migrating";
+    network.room.epoch = 2;
+    network.emit({ type: "epoch", epoch: 2, authorityId: "host", phase: "migrating", checkpoint: null });
+    session.restore(checkpoint);
+    network.room.phase = "racing";
+    network.room.startAt = 1500;
+    network.emit({ type: "epoch", epoch: 2, authorityId: "host", phase: "racing", checkpoint: null });
+    network.time = 1001;
+    session.advance(1 / 60, {});
+    expect(session.race.tick).toBe(12);
+    network.time = 1501;
+    session.advance(1 / 60, {});
+    expect(session.race.tick).toBe(13);
+    session.dispose();
+  });
+  it("accumulates sampled traffic across peers and reconnects instead of reporting the last peer alone", () => {
+    const network = new Transport();
+    const session = new OnlineRaceSession(network, new Map([["local-1", "one"]]), () => {});
+    const quality = (participantId: string, bytesSent: number, bytesReceived: number, rttMs: number) =>
+      network.emit({ type: "quality", participantId, bytesSent, bytesReceived, rttMs, route: "direct" });
+    quality("guest", 100, 200, 30);
+    quality("spectator", 300, 400, 80);
+    expect(session.metrics()).toMatchObject({ bytesSent: 400, bytesReceived: 600, rttMs: 80 });
+    quality("guest", 150, 225, 30);
+    expect(session.metrics()).toMatchObject({ bytesSent: 450, bytesReceived: 625 });
+    network.emit({ type: "peer", participantId: "spectator", status: "closed", attempt: 1 });
+    expect(session.metrics().rttMs).toBe(30);
+    quality("spectator", 25, 10, 90);
+    expect(session.metrics()).toMatchObject({ bytesSent: 475, bytesReceived: 635, rttMs: 90 });
+    network.emit({ type: "epoch", epoch: 2, authorityId: "host", phase: "migrating", checkpoint: null });
+    quality("guest", 15, 10, 20);
+    expect(session.metrics()).toMatchObject({ bytesSent: 490, bytesReceived: 645, rttMs: 20 });
+    session.dispose();
+  });
 });

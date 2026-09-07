@@ -4,6 +4,11 @@ The authoritative engine is independent of DOM, Babylon, transport and storage.
 Its state is plain bounded data. It implements the approved shared racing
 systems on the **actual Butterbell study course**, not substitute tracks.
 
+The public `src/index.ts` is a re-export-only barrel. Shared driving code lives
+in `src/physics.ts`; the race implementation imports physics directly rather
+than importing its own public barrel. Initialization does not depend on whether
+the consumer loads the race, physics or public entry point first.
+
 The working foundation has passed its expansion feedback checkpoint, while
 handling and presentation still need substantial refinement. The five additional
 courses are in production. The engine now supports nonuniform checkpoints,

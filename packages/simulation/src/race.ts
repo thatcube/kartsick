@@ -3,8 +3,8 @@ import {
   combinedStats, getCourse, nearbyFlight, normalizeBuild, roadFeatures, validBuild, wrap,
 } from "@kartsick/content";
 import type { CharacterId, CourseId, CourseQuery, ItemId, KartBuild } from "@kartsick/content";
-import { STEP, advanceKartProgress, copyKart, createKart, stepKart, tuningForBuild } from "./index";
-import type { DriverInput, DrivingEvent, KartState } from "./index";
+import { STEP, advanceKartProgress, copyKart, createKart, stepKart, tuningForBuild } from "./physics";
+import type { DriverInput, DrivingEvent, KartState } from "./physics";
 
 export interface PlayerInput extends DriverInput {
   useItem: boolean;

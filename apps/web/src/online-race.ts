@@ -51,12 +51,14 @@ export class OnlineRaceSession {
   private checkpointInFlight = false;
   private checkpointTick = -60;
   private resumeAt = 0;
+  private awaitingResumeTime = false;
   private pendingEvents: RaceEvent[] = [];
   private readonly eventKeys = new Set<string>();
   private readonly eventOrder: string[] = [];
   private rtt = 0;
   private bytesSent = 0;
   private bytesReceived = 0;
+  private readonly peerQuality = new Map<string, { rtt: number | null; sent: number; received: number }>();
   private snapshotsSent = 0;
   private snapshotsDropped = 0;
   private maximumSnapshotBytes = 0;
@@ -131,13 +133,22 @@ export class OnlineRaceSession {
           this.eventOrder.length = 0;
           this.latestSnapshot = null;
           this.remoteSamples = [];
+          this.peerQuality.clear();
+          this.rtt = 0;
           this.confirmedFinished = false;
           this.waiting = true;
           if (event.checkpoint && event.authorityId !== this.network.participantId) this.restore(event.checkpoint);
         }
         this.resetClock();
         if (event.phase !== "racing") this.waiting = true;
-        else if (this.network.isAuthority) this.waiting = false;
+        else {
+          if (this.awaitingResumeTime) {
+            const startAt = this.network.room?.startAt;
+            if (startAt !== null && startAt !== undefined) this.resumeAt = startAt;
+            this.awaitingResumeTime = false;
+          }
+          if (this.network.isAuthority) this.waiting = false;
+        }
         break;
       case "room":
         if (this.network.isAuthority) this.syncSeats();
@@ -176,14 +187,20 @@ export class OnlineRaceSession {
         if (this.network.isAuthority) this.publish();
         break;
       case "quality":
-        this.rtt = event.rttMs ?? this.rtt;
-        this.bytesSent = event.bytesSent;
-        this.bytesReceived = event.bytesReceived;
+        {
+          const previous = this.peerQuality.get(event.participantId);
+          this.bytesSent += event.bytesSent >= (previous?.sent ?? 0) ? event.bytesSent - (previous?.sent ?? 0) : event.bytesSent;
+          this.bytesReceived += event.bytesReceived >= (previous?.received ?? 0) ? event.bytesReceived - (previous?.received ?? 0) : event.bytesReceived;
+          this.peerQuality.set(event.participantId, { rtt: event.rttMs, sent: event.bytesSent, received: event.bytesReceived });
+          this.rtt = Math.max(0, ...[...this.peerQuality.values()].map(peer => peer.rtt ?? 0));
+        }
         break;
       case "peer":
         if (event.status === "connected") this.peers.add(event.participantId);
         else {
           this.peers.delete(event.participantId);
+          this.peerQuality.delete(event.participantId);
+          this.rtt = Math.max(0, ...[...this.peerQuality.values()].map(peer => peer.rtt ?? 0));
           if (!this.network.isAuthority) this.waiting = true;
         }
         break;
@@ -205,6 +222,7 @@ export class OnlineRaceSession {
     this.checkpointTick = this.race.tick;
     this.confirmedFinished = this.race.phase === "finished";
     this.resumeAt = this.network.connection.serverNow() + 1000;
+    this.awaitingResumeTime = true;
     this.resetClock();
   }
 

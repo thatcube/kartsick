@@ -19,6 +19,13 @@ connect invitation, seating, shared builds, readiness and lifecycle operations.
 `tests/browser/online-game.spec.ts` exercises actual rendered gameplay and host
 handoff in two Chromium processes, separately from the transport-only probes.
 
+After checkpoint restoration, browsers use the room's shared server-scheduled
+resume time rather than each browser's local restoration time. In-game traffic
+diagnostics accumulate sampled data-channel counters across all peers and
+reconnections; the host's displayed RTT is the highest current peer RTT.
+These counters exclude transport overhead and bytes between the last sample and
+a closed connection. They are not exact network egress or relay billing figures.
+
 ## Run locally
 
 From the repository root, after installing the locked dependencies:
@@ -354,7 +361,8 @@ npm run typecheck --workspace @kartsick/signaling
 npm test -- packages/protocol/src/protocol.test.ts \
   packages/protocol/src/rooms.test.ts packages/protocol/src/local-signaling.test.ts
 mkdir -p .network-browser-runtime
-TMPDIR="$PWD/.network-browser-runtime" npm run test:browser -- tests/browser/network.spec.ts
+TMPDIR="$PWD/.network-browser-runtime" npm run test:browser -- \
+  tests/browser/network.spec.ts --output=test-results/network-transport
 ```
 
 The current targeted suite verifies:
@@ -384,7 +392,9 @@ The current targeted suite verifies:
   rejection, disconnect/resume and credential rotation.
 
 Browser owner records contain the exact owned PID/profile and browser version
-in local test artifacts. Both browser processes and their profiles are closed
+in the dedicated `test-results/network-transport` artifacts, separate from local-game
+smoke evidence. Coordinate ownership of port 4174 before starting this suite.
+Both browser processes and their profiles are closed
 in `finally`; no user browser is launched or reused. Keep those private artifact
 paths out of published evidence.
 
