@@ -200,7 +200,8 @@ export class Atelier {
     sign.position.set(...position);
     sign.material = material;
     sign.isPickable = false;
-    this.box(name + " backing", [0, 0, 0.05], [width + 0.1, height + 0.1, 0.08], "#d0bc8d", sign);
+    const backingDepth = Math.max(0.08, width * 0.004);
+    this.box(name + " backing", [0, 0, backingDepth * 0.8], [width + 0.1, height + 0.1, backingDepth], "#d0bc8d", sign);
     return sign;
   }
 

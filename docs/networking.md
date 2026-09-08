@@ -27,12 +27,16 @@ advancing physics. Equal-tick snapshots with newer transport sequences remain
 valid for those retries. Compression leaves event batches, receipt acknowledgments
 and final-state/checkpoint contents unchanged.
 
-Protocol 4 carries simulation-state version 2. Held items include an authoritative
+Protocol 5 carries simulation-state version 2. Held items include an authoritative
 roulette countdown; recovery includes the original pose and safe carry ceiling.
 Receiving or restoring a snapshot does not reroll inventory or restart recovery.
 The new `item-ready` event is a presentation cue, not permission to choose a
-different outcome. Persisted protocol-2/3 rooms retain seats but return to an
-unready lobby instead of restoring incompatible old simulation checkpoints.
+different outcome. Protocol 5 also separates the revised road geometry and
+terrain bounds from earlier clients: matching message fields do not make
+different physical courses compatible. Persisted protocol-2/3/4 rooms retain
+seats but return to an unready lobby instead of restoring incompatible old
+simulation checkpoints. Physical course revisions must update the network
+version as well as course record versions when old checkpoints are not compatible.
 
 After checkpoint restoration, browsers use the room's shared server-scheduled
 resume time rather than each browser's local restoration time. In-game traffic
@@ -51,7 +55,7 @@ npm run dev
 
 The existing Vite origin serves both the application and:
 
-- `POST /rooms` with JSON `{"version":4}` → `201 {version:4, code}`.
+- `POST /rooms` with JSON `{"version":5}` → `201 {version:5, code}`.
 - `GET /rooms/ABCDEFGH` upgraded to a WebSocket.
 - Invitations use `/?room=ABCDEFGH`; the eight-character code can also be entered
   directly. There is no account, password, matchmaking, or profile service.
@@ -71,7 +75,7 @@ persistence across object hibernation; neither adapter stores race state.
 ## Packages and actual endpoints
 
 - `packages/protocol`: legacy version-one single-driver parser plus separate
-  version-four room, complete-player-input, snapshot, checkpoint, event, and
+  version-five room, complete-player-input, snapshot, checkpoint, event, and
   bounded-fragment schemas. The legacy parser/tests remain compatible.
 - `apps/signaling/src/room.ts`: adapter-independent room state machine.
 - `apps/signaling/src/local.ts`: real Node HTTP/`ws` adapter and Vite integration.

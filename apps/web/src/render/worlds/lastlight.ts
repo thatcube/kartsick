@@ -12,6 +12,7 @@ import type { Point3 } from "../../../../../packages/content-layouts/types";
 import { buildCourseSurface } from "../course-surface";
 import type { Atelier } from "../geometry";
 import type { CourseWorld } from "../world-types";
+import { hazardApproaches } from "./terrain-art";
 
 const colors = {
   chalk: "#f5e5c3", ice: "#d8e6ef", lilac: "#b4a6c9", rock: "#be8066",
@@ -230,12 +231,18 @@ function terrainChapters(art: Atelier, course: CourseQuery): void {
     const positions = mesh.getVerticesData(VertexBuffer.PositionKind)!;
     const vertexColors: number[] = [];
     for (let vertex = 0; vertex < positions.length; vertex += 3) {
-      const px = positions[vertex], pz = positions[vertex + 2];
+      const px = positions[vertex], py = positions[vertex + 1], pz = positions[vertex + 2];
       const upperMix = Math.max(0, Math.min(1, (pz - upperGate + 32) / 64));
       const lowerMix = Math.max(0, Math.min(1, (pz - lowerGate + 32) / 64));
       const chapter = Color3.Lerp(Color3.Lerp(alpine, forest, upperMix), village, lowerMix);
-      const tint = 0.13 + 0.1 * Math.sin(px * 0.025 + pz * 0.018);
-      const color = Color3.Lerp(chapter, cut, tint);
+      const slope = Math.hypot(course.terrainHeight(px + 4, pz) - course.terrainHeight(px - 4, pz),
+        course.terrainHeight(px, pz + 4) - course.terrainHeight(px, pz - 4)) / 8;
+      const tint = Math.min(0.88, 0.1 + slope * 0.65);
+      const cliff = Color3.Lerp(chapter, cut, tint);
+      const snow = Math.max(0, Math.min(0.86, (py - 365) / 75)) * Math.max(0, 1 - slope * 0.25);
+      const color = Color3.Lerp(cliff, Color3.FromHexString(colors.ice), snow);
+      const stratum = 0.91 + 0.09 * Math.sin(py * 0.34 + Math.sin(pz * 0.011));
+      color.scaleInPlace(stratum);
       vertexColors.push(color.r, color.g, color.b, 1);
     }
     mesh.setVerticesData(VertexBuffer.ColorKind, vertexColors);
@@ -431,6 +438,29 @@ export function makeLastlightWorld(art: Atelier, course: CourseQuery): CourseWor
   const casters = buildCourseSurface(art, course, LASTLIGHT);
   terrainChapters(art, course);
   retainingWalls(art, course);
+  const approaches = hazardApproaches(art, course, LASTLIGHT.hazards,
+    { frame: colors.chalk, signal: colors.lamp, dark: colors.shadow });
+  casters.push(...approaches.casters);
+  // Cross-valley strata make the cut faces read as one mountain rather than isolated rock props.
+  for (const side of [-1, 1]) for (let shelf = 0; shelf < 8; shelf++) {
+    const positions: number[] = [], indices: number[] = [];
+    for (let i = 0; i <= 16; i++) {
+      const z = 60 + shelf * 152 + i * 8;
+      const x = side * (348 + 26 * Math.sin(z * 0.012 + shelf * 0.5));
+      for (const across of [-0.7, 0.7]) {
+        const px = x + across;
+        positions.push(px, course.terrainHeight(px, z) + 0.18, z);
+      }
+      if (i < 16) {
+        const a = i * 2;
+        indices.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
+      }
+    }
+    const seam = art.mesh(`lastlight exposed strata ${side}:${shelf}`, positions, indices);
+    seam.material = art.material(shelf < 3 ? colors.ice : colors.rockLight);
+    seam.material.backFaceCulling = false;
+    seam.freezeWorldMatrix();
+  }
   const props = new MountainProps(art, course);
   defineProps(art, props);
 
@@ -512,6 +542,7 @@ export function makeLastlightWorld(art: Atelier, course: CourseQuery): CourseWor
       sun: "#ffcfad", sunIntensity: 1.12, fill: "#d2d4f0", fillIntensity: 0.72, ground: "#777486",
     },
     animate(time: number) {
+      approaches.animate(time);
       for (const actor of moving) {
         const position = hazardPosition(actor.hazard, time);
         actor.root.position.set(...position);

@@ -55,8 +55,8 @@ export class RoomEngine {
   readonly state: StoredRoom;
   expired = false;
   constructor(code: string, private readonly now: () => number = Date.now, saved?: StoredRoom) {
-    // Old simulations cannot restore the new inventory/recovery state. Retain seats, not incompatible checkpoints.
-    if (saved && [2, 3].includes(Number(saved.room.version))) {
+    // Changed inventory, recovery or course geometry invalidates old checkpoints, not room seats.
+    if (saved && [2, 3, 4].includes(Number(saved.room.version))) {
       saved = {
         ...saved,
         room: {

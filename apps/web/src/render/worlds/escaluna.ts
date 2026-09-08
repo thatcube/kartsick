@@ -8,6 +8,7 @@ import { hazardPosition } from "../../../../../packages/content-layouts/types";
 import { buildCourseSurface } from "../course-surface";
 import type { Atelier, Triple } from "../geometry";
 import type { CourseWorld } from "../world-types";
+import { hazardApproaches, terrainMaterials } from "./terrain-art";
 
 const CREAM = "#fff2db", LILAC = "#b295d1", POOL = "#79cbdb", APRICOT = "#efb995", INK = "#65567e";
 
@@ -82,6 +83,40 @@ function shop(art: Atelier, name: string, position: Triple, yaw: number, color: 
 export function makeEscalunaWorld(art: Atelier, course: CourseQuery): CourseWorld {
   const casters: Mesh[] = [...buildCourseSurface(art, course, ESCALUNA)];
   const scene = art.scene;
+  terrainMaterials(art, course, { low: "#c5c1c6", high: "#94b8a1", rock: "#ae8b80", lowY: 0, highY: 8 });
+  const approaches = hazardApproaches(art, course, ESCALUNA.hazards, { frame: CREAM, signal: APRICOT, dark: INK });
+  casters.push(...approaches.casters);
+  // Expose the height of both promenades through recessed arcade bays and structural ribs.
+  for (const u of [0.15, 0.18, 0.22, 0.26, 0.30, 0.74, 0.78, 0.82, 0.86]) {
+    const p = course.sampleRoad(u);
+    if (p.y < 4) continue;
+    const root = new TransformNode(`escaluna promenade arcade ${u}`, scene);
+    root.position.set(p.x, p.y, p.z);
+    root.rotation.y = Math.atan2(p.dx, p.dz);
+    for (const side of [-1, 1]) {
+      art.box("promenade recessed apron", [side * 6.8, -2, 0], [0.6, 1.8, 10], LILAC, root);
+      art.tube("promenade undercroft arch", [[side * 5.8, -p.y, -5], [side * 5.8, -2.8, -3.5],
+        [side * 5.8, -1.3, 0], [side * 5.8, -2.8, 3.5], [side * 5.8, -p.y, 5]], 0.45, APRICOT, root);
+      art.box("promenade ivory coping", [side * 7.1, -1.3, 0], [0.45, 0.4, 10], CREAM, root);
+    }
+    art.batchModel(root, new Set(), true);
+    casters.push(...root.getChildMeshes().filter((mesh): mesh is Mesh => mesh instanceof Mesh));
+  }
+  // A crescent conservatory crowns the landscaped western terrace, away from the road.
+  for (let bay = 0; bay < 5; bay++) {
+    const z = -13 + bay * 14, x = -248;
+    const y = course.terrainHeight(x, z);
+    const arch: Triple[] = Array.from({ length: 17 }, (_, i) => {
+      const a = i / 16 * Math.PI;
+      return [x + Math.cos(a) * 11, y + 5 + Math.sin(a) * 11, z];
+    });
+    art.tube("conservatory ivory rib", arch, 0.35, CREAM);
+    for (const side of [-1, 1]) {
+      art.tube("conservatory terrace pier", [[x + side * 11, y, z], [x + side * 11, y + 5, z]], 0.5, APRICOT);
+    }
+    art.oval("conservatory citrus crown", [x, y + 4, z], [8, 7, 8], "#94b8a1", undefined, 0.85, 8);
+    casters.push(...art.finishStatic());
+  }
   const painted = new Set<DynamicTexture>();
   for (const caster of casters) {
     const texture = caster.material instanceof StandardMaterial ? caster.material.diffuseTexture : null;
@@ -329,6 +364,7 @@ export function makeEscalunaWorld(art: Atelier, course: CourseQuery): CourseWorl
       sun: "#fff0d9", sunIntensity: 0.95, fill: "#d9d6f4", fillIntensity: 0.9, ground: "#a69aaa",
     },
     animate(time, reducedMotion = false) {
+      approaches.animate(time);
       hazardRoots.forEach((root, index) => root.position.set(...hazardPosition(ESCALUNA.hazards[index], time)));
       displays.rotation.y = reducedMotion ? 0 : time * 0.22;
     },

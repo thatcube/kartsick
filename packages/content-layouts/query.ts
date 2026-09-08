@@ -227,8 +227,20 @@ export function createLayoutQuery(layout: CourseLayout, mirror = false): LayoutQ
     return result;
   };
   const ground = (x: number, z: number) => layout.groundHeight(x * sign, z);
-  const minY = Math.min(layout.waterLevel, ...road.map(point => Math.min(point.y, ground(point.x, point.z)))) - 24;
-  const maxY = Math.max(...road.map(point => point.y)) + 90;
+  let minY = Math.min(layout.waterLevel, ...road.map(point => Math.min(point.y, ground(point.x, point.z)))) - 24;
+  let maxY = Math.max(...road.map(point => point.y)) + 90;
+  // Reachable hills and ravines are part of the world, not just the road's altitude range.
+  // Sample the actual rendered tile vertices, including partial boundary tiles.
+  const { minX, maxX, minZ, maxZ } = layout.bounds;
+  for (let tileZ = minZ; tileZ < maxZ; tileZ += 64) for (let tileX = minX; tileX < maxX; tileX += 64) {
+    const width = Math.min(64, maxX - tileX), depth = Math.min(64, maxZ - tileZ);
+    for (let z = 0; z <= 8; z++) for (let x = 0; x <= 8; x++) {
+      const height = layout.groundHeight(tileX + width * x / 8, tileZ + depth * z / 8);
+      if (!Number.isFinite(height)) throw new RangeError("Terrain height must be finite.");
+      minY = Math.min(minY, height - 24);
+      maxY = Math.max(maxY, height + 90);
+    }
+  }
   let hazardTime = NaN;
   let activeHazards: ActiveCourseHazard[] = [];
   const hazards = (time: number) => {

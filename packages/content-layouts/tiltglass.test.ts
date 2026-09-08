@@ -144,6 +144,17 @@ it("builds finite Tiltglass meshes within budget and keeps gameplay moving with 
       return mesh;
     });
     const world = makeTiltglassWorld(art, course);
+    const backglass = scene.getTransformNodeByName("tiltglass illustrated backglass")!;
+    expect(backglass).not.toBeNull();
+    for (const mesh of backglass.getChildMeshes()) {
+      mesh.computeWorldMatrix(true);
+      expect(mesh.getBoundingInfo().boundingBox.minimumWorld.x, mesh.name).toBeGreaterThan(TILTGLASS.bounds.maxX + 20);
+    }
+    const title = scene.getMeshByName("Tiltglass backglass title")!;
+    for (const backing of title.getChildMeshes()) {
+      expect(backing.getBoundingInfo().boundingBox.minimumWorld.x - title.getAbsolutePosition().x,
+        "distant title backing must not z-fight with its lettering").toBeGreaterThan(0.1);
+    }
     for (const obstacle of course.colliders) {
       expect(cores.get(obstacle.name)?.bottom).toBeCloseTo(obstacle.bottom, 4);
       expect(cores.get(obstacle.name)?.top).toBeCloseTo(obstacle.top, 4);

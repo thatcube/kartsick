@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { NullEngine } from "@babylonjs/core/Engines/nullEngine";
 import { Scene } from "@babylonjs/core/scene";
+import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { Atelier } from "../../apps/web/src/render/geometry";
 import { makeEscalunaWorld } from "../../apps/web/src/render/worlds/escaluna";
 import { ESCALUNA } from "./escaluna";
@@ -124,6 +125,14 @@ describe("Escaluna Galleria", () => {
         result.computeWorldMatrix(true);
         const box = result.getBoundingInfo().boundingBox;
         placed.set(mesh.name, [...box.minimumWorld.asArray(), ...box.maximumWorld.asArray()]);
+      }
+      if (/^promenade (recessed apron|undercroft arch|ivory coping)$/.test(mesh.name)) {
+        const vertices = mesh.getVerticesData("position")!, matrix = mesh.computeWorldMatrix(true);
+        for (let i = 0; i < vertices.length; i += 3) {
+          const point = Vector3.TransformCoordinates(new Vector3(vertices[i], vertices[i + 1], vertices[i + 2]), matrix);
+          const road = course.projectRoad(point.x, point.z);
+          if (road.separation < road.shoulderWidth) expect(point.y, mesh.name).toBeLessThan(road.y - 0.05);
+        }
       }
       return result;
     });

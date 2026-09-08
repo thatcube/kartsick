@@ -1,5 +1,7 @@
 import { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
+import "@babylonjs/core/Meshes/thinInstanceMesh";
+import { Matrix, Quaternion, Vector3 } from "@babylonjs/core/Maths/math.vector";
 import type { CourseQuery } from "@kartsick/content";
 import { COPPERWHISTLE } from "../../../../../packages/content-layouts/copperwhistle";
 import { hazardPosition } from "../../../../../packages/content-layouts/types";
@@ -8,6 +10,7 @@ import { buildCourseSurface } from "../course-surface";
 import type { Atelier, Contour, Triple } from "../geometry";
 import type { CourseWorld } from "../world-types";
 import { instanceSource, portal, ring, routeSign } from "./tiltglass-copperwhistle-art";
+import { hazardApproaches, terrainMaterials } from "./terrain-art";
 
 const BARK = "#79533e", BARK_LIGHT = "#a77a50", WOOD = "#d3a570", CREAM = "#efd9a3";
 const COPPER = "#c86f40", TEAL = "#427c79", DARK_TEAL = "#315e61";
@@ -150,8 +153,110 @@ function hollowLog(art: Atelier, course: CourseQuery): Mesh[] {
 
 export function makeCopperwhistleWorld(art: Atelier, course: CourseQuery): CourseWorld {
   const casters = buildCourseSurface(art, course, COPPERWHISTLE);
+  const approaches = hazardApproaches(art, course, COPPERWHISTLE.hazards, { frame: WOOD, signal: CREAM, dark: DARK_TEAL });
+  casters.push(...approaches.casters);
+  // Root buttresses and a deep stream cut anchor the enormous trees below the suspended road.
+  for (let index = 0; index < COPPERWHISTLE.obstacles.length; index += 2) {
+    const tree = COPPERWHISTLE.obstacles[index];
+    const [x, , z] = tree.position;
+    const y = course.terrainHeight(x, z);
+    const rootGroup = new TransformNode(`copperwhistle buttress ${index}`, art.scene);
+    for (let root = 0; root < 3; root++) {
+      const a = root / 3 * Math.PI * 2 + index * 0.9;
+      const dx = Math.sin(a), dz = Math.cos(a);
+      const endX = x + dx * 14, endZ = z + dz * 14;
+      art.sweep("forest buttress root", [[x, y + 11, z], [x + dx * 5, y + 3, z + dz * 5],
+        [endX, course.terrainHeight(endX, endZ) + 0.2, endZ]], [2.5, 2.2, 0.12], BARK, rootGroup, 8);
+    }
+    art.batchModel(rootGroup, new Set(), true);
+    casters.push(...rootGroup.getChildMeshes().filter((mesh): mesh is Mesh => mesh instanceof Mesh));
+  }
+  for (const u of [0.045, 0.17, 0.345, 0.465, 0.705, 0.84]) {
+    const p = course.sampleRoad(u);
+    const rootGroup = new TransformNode(`copperwhistle bridge footing ${u}`, art.scene);
+    for (const side of [-1, 1]) {
+      const x = p.x + p.dz * side * 4, z = p.z - p.dx * side * 4;
+      art.sweep("boardwalk rising root pier", [[x, course.terrainHeight(x, z), z],
+        [x + p.dx * 6, p.y - 15, z + p.dz * 6], [x, p.y - 1.4, z]], [2.2, 1.5, 0.6], BARK, rootGroup, 8);
+    }
+    art.batchModel(rootGroup, new Set(), true);
+    casters.push(...rootGroup.getChildMeshes().filter((mesh): mesh is Mesh => mesh instanceof Mesh));
+  }
   const crownSources = FOLIAGE.map(color => instanceSource(art, "layered autumn crown", color, 10));
   casters.push(...crownSources);
+  // Staggered forest edges frame the canopy instead of leaving bridges against empty sky.
+  // These trunks and crowns stay outside the playable rectangle.
+  const backdropRoot = new TransformNode("copperwhistle forest backdrop", art.scene);
+  const trunkSource = art.sculpt("distant fluted trunk", [
+    [0, 1.2, 1.2], [0.15, 1, 1], [0.65, 0.72, 0.75], [1, 0.4, 0.45],
+  ], BARK, backdropRoot, 0.9, 8);
+  trunkSource.isVisible = false;
+  const forestEdges = Array.from({ length: 4 }, () => new Map<Mesh, number[]>());
+  const forestInstance = (edge: number, source: Mesh, position: Triple, scale: Triple, yaw = 0) => {
+    const matrices = forestEdges[edge].get(source) ?? [];
+    matrices.push(...Matrix.Compose(new Vector3(...scale), Quaternion.RotationYawPitchRoll(yaw, 0, 0),
+      new Vector3(...position)).asArray());
+    forestEdges[edge].set(source, matrices);
+  };
+  const bounds = COPPERWHISTLE.bounds;
+  const forestAxis = (min: number, max: number): number[] => {
+    const values = Array.from({ length: 32 }, (_, i) => min - 256 + i * 8);
+    for (let tile = min; tile < max; tile += 64) {
+      const width = Math.min(64, max - tile);
+      for (let i = 0; i < 8; i++) values.push(tile + width * i / 8);
+    }
+    return [...values, ...Array.from({ length: 33 }, (_, i) => max + i * 8)];
+  };
+  const xs = forestAxis(bounds.minX, bounds.maxX), zs = forestAxis(bounds.minZ, bounds.maxZ);
+  const groundPositions: number[] = [], groundIndices: number[] = [];
+  for (let row = 0; row < zs.length; row++) for (let column = 0; column < xs.length; column++) {
+    const x = xs[column], z = zs[row];
+    groundPositions.push(x, course.terrainHeight(x, z), z);
+    if (row === zs.length - 1 || column === xs.length - 1) continue;
+    if (x >= bounds.minX && xs[column + 1] <= bounds.maxX && z >= bounds.minZ && zs[row + 1] <= bounds.maxZ) continue;
+    const a = row * xs.length + column;
+    groundIndices.push(a, a + 1, a + xs.length, a + 1, a + xs.length + 1, a + xs.length);
+  }
+  // Scenery beyond the recovery boundary still needs a forest floor; never overlay the playable terrain.
+  const forestFloor = art.mesh("copperwhistle terrain forest skirt", groundPositions, groundIndices);
+  forestFloor.parent = backdropRoot;
+  forestFloor.material = art.material("#ffffff");
+  forestFloor.receiveShadows = true;
+  forestFloor.freezeWorldMatrix();
+  terrainMaterials(art, course, { low: "#384b45", high: "#8a9857", rock: BARK, lowY: -88, highY: -38 });
+  for (let layer = 0; layer < 2; layer++) for (let edge = 0; edge < 4; edge++) {
+    const count = layer ? 4 : 6, margin = layer ? 140 : 64;
+    for (let i = 0; i < count; i++) {
+      const t = (i + 0.35 + layer * 0.2) / count;
+      const x = edge < 2 ? (edge === 0 ? bounds.minX - margin : bounds.maxX + margin)
+        : bounds.minX - margin + (bounds.maxX - bounds.minX + margin * 2) * t;
+      const z = edge >= 2 ? (edge === 2 ? bounds.minZ - margin : bounds.maxZ + margin)
+        : bounds.minZ - margin + (bounds.maxZ - bounds.minZ + margin * 2) * t;
+      const index = layer * 24 + edge * 6 + i, height = 125 + index % 5 * 11;
+      const floor = course.terrainHeight(x, z), radius = 5 + index % 3;
+      forestInstance(edge, trunkSource, [x, floor, z], [radius, height, radius]);
+      for (let cluster = 0; cluster < 3; cluster++) {
+        const angle = cluster * 2.4 + index;
+        forestInstance(edge, crownSources[(index + cluster) % crownSources.length],
+          [x + Math.sin(angle) * 12, floor + height - cluster * 7, z + Math.cos(angle) * 12],
+          [49 + index % 3 * 5, 24 + cluster * 3, 46 + index % 4 * 4], angle);
+      }
+    }
+  }
+  forestEdges.forEach((sources, edge) => {
+    let batch = 0;
+    for (const [source, matrices] of sources) {
+      const mesh = source.clone(`forest edge ${edge}:${batch++}`, backdropRoot, true)!;
+      // Thin-instance transforms belong to Geometry, so each spatial batch must own it.
+      mesh.makeGeometryUnique();
+      mesh.isVisible = true;
+      mesh.thinInstanceSetBuffer("matrix", new Float32Array(matrices), 16, true);
+      mesh.thinInstanceRefreshBoundingInfo();
+      mesh.freezeWorldMatrix();
+      casters.push(mesh);
+    }
+  });
+  trunkSource.dispose();
   for (let i = 0; i < COPPERWHISTLE.obstacles.length; i++) casters.push(...canopyTree(art, i, crownSources, course));
   for (const [index, title] of [[0, "COPPERWHISTLE"], [5, "DRAFT HOUSE"], [6, "LANDING LOFT"], [14, "SEED POST"]] as const) {
     casters.push(...treehouse(art, course, index, title));
@@ -258,6 +363,7 @@ export function makeCopperwhistleWorld(art: Atelier, course: CourseQuery): Cours
       fill: "#c1d2bd", fillIntensity: 0.6, ground: COPPERWHISTLE.palette.ground,
     },
     animate(time, reducedMotion = false) {
+      approaches.animate(time);
       for (const { hazard, root, tether } of baskets) {
         const position = hazardPosition(hazard, time);
         root.position.set(...position);

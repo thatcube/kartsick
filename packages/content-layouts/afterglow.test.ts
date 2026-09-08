@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { NullEngine } from "@babylonjs/core/Engines/nullEngine";
 import { Scene } from "@babylonjs/core/scene";
+import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { Atelier } from "../../apps/web/src/render/geometry";
 import { makeAfterglowWorld } from "../../apps/web/src/render/worlds/afterglow";
 import { AFTERGLOW } from "./afterglow";
@@ -65,7 +66,8 @@ describe("Afterglow Airway", () => {
       expect(b.distance - a.distance).toBeLessThan(42);
       expect(a.dx * b.dx + a.dz * b.dz).toBeGreaterThan(0.985);
       expect(a.y).toBeGreaterThan(approach.y + 1);
-      expect(course.surfaceHeight(middle.x, middle.z)).toBe(-7);
+      expect(course.surfaceHeight(middle.x, middle.z)).toBe(AFTERGLOW.groundHeight(middle.x, middle.z));
+      expect(course.surfaceHeight(middle.x, middle.z)).toBeLessThan(middle.y - 25);
       const landing = course.sampleRoad(gap.end + 0.001);
       expect(course.surfaceHeight(landing.x, landing.z)).toBeCloseTo(landing.y, 2);
       expect(course.hasRail(gap.start - 0.035)).toBe(true);
@@ -106,7 +108,7 @@ describe("Afterglow Airway", () => {
       expect(z).toBeGreaterThan(AFTERGLOW.bounds.minZ);
       expect(z).toBeLessThan(AFTERGLOW.bounds.maxZ);
     }
-    expect(AFTERGLOW.groundHeight(250, 210)).toBe(-7);
+    expect(AFTERGLOW.groundHeight(250, 210)).toBeGreaterThan(-7);
     expect(AFTERGLOW.isWater(250, 210)).toBe(false);
   });
 
@@ -125,6 +127,14 @@ describe("Afterglow Airway", () => {
         result.computeWorldMatrix(true);
         const box = result.getBoundingInfo().boundingBox;
         placed.set(mesh.name, [...box.minimumWorld.asArray(), ...box.maximumWorld.asArray()]);
+      }
+      if (mesh.name === "airway diagonal deck brace" || mesh.name === "airway transverse bearing") {
+        const vertices = mesh.getVerticesData("position")!, matrix = mesh.computeWorldMatrix(true);
+        for (let i = 0; i < vertices.length; i += 3) {
+          const point = Vector3.TransformCoordinates(new Vector3(vertices[i], vertices[i + 1], vertices[i + 2]), matrix);
+          const road = course.projectRoad(point.x, point.z);
+          if (road.separation < road.shoulderWidth) expect(point.y, mesh.name).toBeLessThan(road.y - 0.05);
+        }
       }
       return result;
     });

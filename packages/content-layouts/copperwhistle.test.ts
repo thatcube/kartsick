@@ -59,7 +59,8 @@ describe("Copperwhistle Canopy authored circuit", () => {
       expect(Math.abs((b.x - a.x) * a.dz - (b.z - a.z) * a.dx)).toBeLessThan(3);
       expect(COPPERWHISTLE.checkpoints.some(u => u > gap.start && u < gap.end)).toBe(false);
       const mid = course.sampleRoad((gap.start + gap.end) / 2);
-      expect(course.surfaceHeight(mid.x, mid.z)).toBe(-65);
+      expect(course.surfaceHeight(mid.x, mid.z)).toBe(COPPERWHISTLE.groundHeight(mid.x, mid.z));
+      expect(course.surfaceHeight(mid.x, mid.z)).toBeLessThan(mid.y - 60);
       const supported = course.sampleRoad(gap.end + 0.002);
       expect(course.surfaceHeight(supported.x, supported.z)).toBeCloseTo(supported.y, 2);
       const gust = COPPERWHISTLE.hazards.find(h => h.kind === "gust")!;
@@ -119,8 +120,9 @@ describe("Copperwhistle Canopy authored circuit", () => {
 });
 
 it("builds finite instanced canopy scenery and advances hazards but not decorative leaves in reduced motion", async () => {
-  const [{ NullEngine }, { Scene }, { Atelier }, { makeCopperwhistleWorld }] = await Promise.all([
+  const [{ NullEngine }, { Scene }, { Mesh }, { Atelier }, { makeCopperwhistleWorld }] = await Promise.all([
     import("@babylonjs/core/Engines/nullEngine"), import("@babylonjs/core/scene"),
+    import("@babylonjs/core/Meshes/mesh"),
     import("../../apps/web/src/render/geometry"), import("../../apps/web/src/render/worlds/copperwhistle"),
   ]);
   vi.stubGlobal("OffscreenCanvas", class {
@@ -144,6 +146,25 @@ it("builds finite instanced canopy scenery and advances hazards but not decorati
       return mesh;
     });
     const world = makeCopperwhistleWorld(art, course);
+    const backdrop = scene.meshes.filter((mesh): mesh is InstanceType<typeof Mesh> => mesh instanceof Mesh && mesh.name.startsWith("forest edge "));
+    expect(backdrop).toHaveLength(24);
+    expect(backdrop.reduce((sum, mesh) => sum + mesh.thinInstanceCount, 0)).toBe(160);
+    expect(new Set(backdrop.map(mesh => mesh.geometry)).size).toBe(backdrop.length);
+    for (const mesh of backdrop) {
+      mesh.computeWorldMatrix(true);
+      const { minimumWorld: min, maximumWorld: max } = mesh.getBoundingInfo().boundingBox;
+      const bounds = COPPERWHISTLE.bounds;
+      expect(max.x < bounds.minX || min.x > bounds.maxX || max.z < bounds.minZ || min.z > bounds.maxZ,
+        `${mesh.name} enters playable space`).toBe(true);
+    }
+    const floor = scene.getMeshByName("copperwhistle terrain forest skirt")!;
+    const positions = floor.getVerticesData("position")!, triangles = floor.getIndices()!;
+    for (let i = 0; i < triangles.length; i += 3) {
+      const x = (positions[triangles[i] * 3] + positions[triangles[i + 1] * 3] + positions[triangles[i + 2] * 3]) / 3;
+      const z = (positions[triangles[i] * 3 + 2] + positions[triangles[i + 1] * 3 + 2] + positions[triangles[i + 2] * 3 + 2]) / 3;
+      const bounds = COPPERWHISTLE.bounds;
+      expect(x < bounds.minX || x > bounds.maxX || z < bounds.minZ || z > bounds.maxZ).toBe(true);
+    }
     for (const [index, obstacle] of course.colliders.entries()) {
       expect(trunks.get(`copperwhistle tree ${index}`)?.bottom).toBeCloseTo(obstacle.bottom, 4);
       expect(trunks.get(`copperwhistle tree ${index}`)?.top).toBeCloseTo(obstacle.top, 4);

@@ -1,13 +1,21 @@
 import type { CourseLayout, Point3 } from "./types";
+import { mound, routeCutTerrain } from "./terrain";
 
 const points: readonly Point3[] = [
   [30, 18, -170], [88, 19, -158], [139, 24, -118], [156, 28, -62],
   [146, 30, -4], [111, 30, 42], [70, 37, 87], [40, 32, 136],
   [6, 29, 180], [-48, 28, 185], [-97, 27, 154], [-119, 26, 103],
-  [-111, 24, 57], [-124, 22, 14], [-165, 21, -7], [-211, 23, -2],
-  [-239, 25, -30], [-225, 26, -76], [-184, 24, -91], [-143, 22, -82],
-  [-104, 20, -99], [-94, 18, -143], [-63, 18, -174], [-18, 18, -181],
+  [-111, 24, 57], [-124, 22, 12], [-165, 21, -3], [-211, 23, -2],
+  [-239, 25, -28], [-226, 26, -77], [-183, 24, -90], [-143, 22, -81],
+  [-106, 20, -100], [-91, 18, -143], [-63, 18, -174], [-18, 18, -181],
 ];
+const bounds = { minX: -300, maxX: 220, minZ: -240, maxZ: 235 };
+const innerBough: readonly Point3[] = [points[12], [-143, 23.7, 39], [-181, 23.2, 25], points[15]];
+const groundHeight = routeCutTerrain({
+  points, closed: true, shortcuts: [innerBough], bounds, clearance: 63,
+  height: (x, z) => -65 + 28 * mound(x, z, 75, -45, 70, 87)
+    + 22 * mound(x, z, -203, 134, 68, 70) - 23 * mound(x, z, -62, 12, 38, 148),
+});
 
 const trees: readonly Point3[] = [
   [15, -15, -143], [91, -15, -132], [131, -15, -57], [171, -15, 9],
@@ -21,7 +29,7 @@ const trees: readonly Point3[] = [
 export const COPPERWHISTLE: CourseLayout = {
   id: "copperwhistle",
   name: "Copperwhistle Canopy",
-  version: "copperwhistle-2",
+  version: "copperwhistle-3",
   format: "laps",
   points,
   halfWidth: 6.5,
@@ -35,7 +43,7 @@ export const COPPERWHISTLE: CourseLayout = {
     name: "Inner-bough cut",
     from: 0.5,
     to: 0.625,
-    points: [points[12], [-143, 23.7, 39], [-181, 23.2, 25], points[15]],
+    points: innerBough,
     halfWidth: 3,
     rough: true,
   }],
@@ -58,15 +66,16 @@ export const COPPERWHISTLE: CourseLayout = {
   ],
   obstacles: trees.map(([x, y, z], index) => {
     const height = 100 + index % 3 * 6;
-    return { id: `canopy-tree-${index}`, shape: "circle", position: [x, y - height / 2, z],
-      radius: index % 4 === 0 ? 4 : 3.2, height };
+    const bottom = Math.min(y - height / 2, groundHeight(x, z) - 1);
+    return { id: `canopy-tree-${index}`, shape: "circle", position: [x, bottom, z],
+      radius: index % 4 === 0 ? 4 : 3.2, height: y + height / 2 - bottom };
   }),
   palette: {
     sky: "#f4e5c9", road: "#ba885b", verge: "#896346", rail: "#efd9a3",
     accent: "#c86f40", secondary: "#427c79", ground: "#756e4a",
   },
-  bounds: { minX: -300, maxX: 220, minZ: -240, maxZ: 235 },
-  groundHeight: () => -65,
+  bounds,
+  groundHeight,
   waterLevel: -90,
   isWater: () => false,
 };

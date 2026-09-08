@@ -10,6 +10,7 @@ import { buildCourseSurface } from "../course-surface";
 import type { Atelier, Triple } from "../geometry";
 import type { CourseWorld } from "../world-types";
 import { instanceSource, portal, ring, routeSign } from "./tiltglass-copperwhistle-art";
+import { hazardApproaches, terrainMaterials } from "./terrain-art";
 
 const PEARL = "#f2e8d6", CHERRY = "#d84756", NAVY = "#263957", BRASS = "#c7a15d";
 const CHROME = "#cfdfe4", INK = "#202b45", LAMP = "#ffe2a1", AQUA = "#78c5cb";
@@ -79,6 +80,60 @@ function hazardModel(art: Atelier, hazard: CourseHazard): { root: TransformNode;
 
 export function makeTiltglassWorld(art: Atelier, course: CourseQuery): CourseWorld {
   const casters = buildCourseSurface(art, course, TILTGLASS);
+  terrainMaterials(art, course, { low: "#182337", high: "#344d64", rock: "#83694b", lowY: -12, highY: -3 });
+  const approaches = hazardApproaches(art, course, TILTGLASS.hazards, { frame: BRASS, signal: LAMP, dark: NAVY });
+  casters.push(...approaches.casters);
+  // Recessed mechanism wells make the tabletop a layered cabinet, not a flat painted floor.
+  for (const [x, z, radius] of [[-20, 67, 19], [-166, 2, 10]]) {
+    const floor = course.terrainHeight(x, z);
+    art.cylinder("recessed mechanism axle", [x, floor + 2.2, z], 3, 4, 4.4, CHROME);
+    ring(art, "recessed gear rim", [x, floor + 1.5, z], radius, 0.6, BRASS);
+    ring(art, "recessed gear inner race", [x, floor + 1.6, z], radius * 0.72, 0.4, CHROME);
+    for (let tooth = 0; tooth < 12; tooth++) {
+      const a = tooth / 12 * Math.PI * 2;
+      const gear = art.box("recessed gear tooth", [x + Math.sin(a) * radius, floor + 1.5, z + Math.cos(a) * radius],
+        [2.5, 1.3, 3.5], BRASS);
+      gear.rotation.y = a;
+      if (tooth % 2 === 0) art.tube("recessed gear spoke", [[x, floor + 1.4, z],
+        [x + Math.sin(a) * radius, floor + 1.4, z + Math.cos(a) * radius]], 0.45, CHERRY);
+    }
+    casters.push(...art.finishStatic());
+  }
+  for (const side of [-1, 1]) {
+    const x = side < 0 ? -249 : 167;
+    for (let bay = 0; bay < 4; bay++) {
+      const z = -97 + bay * 82;
+      art.box("lacquer cabinet wall", [x, -10, z], [4.5, 17, 79], NAVY);
+      art.box("cabinet brass inlay", [x - side * 2.3, -7, z], [0.08, 0.4, 72], BRASS);
+      for (let vent = 0; vent < 5; vent++) art.box("cabinet inset ventilation",
+        [x - side * 2.32, -12, z - 12 + vent * 6], [0.1, 5, 2], INK);
+      casters.push(...art.finishStatic());
+    }
+  }
+  const backglass = new TransformNode("tiltglass illustrated backglass", art.scene);
+  backglass.position.set(TILTGLASS.bounds.maxX + 52, -12, 25);
+  backglass.rotation.y = Math.PI / 2;
+  art.sculpt("arcade arched cabinet", [
+    [0, 120, 5], [76, 120, 5], [88, 102, 5], [99, 66, 5], [104, 1, 5],
+  ], NAVY, backglass, 1, 12);
+  art.tube("backglass cherry arch", [[-118, 5, -5.2], [-118, 73, -5.2], [-99, 86, -5.2],
+    [-63, 97, -5.2], [0, 102, -5.2], [63, 97, -5.2], [99, 86, -5.2], [118, 73, -5.2], [118, 5, -5.2]],
+  2, CHERRY, backglass);
+  art.oval("backglass painted planet", [0, 42, -5.4], [66, 58, 1], CHERRY, backglass, 0.9, 16);
+  art.tube("backglass brass orbit", Array.from({ length: 49 }, (_, i): Triple => {
+    const a = i / 48 * Math.PI * 2;
+    return [Math.cos(a) * 72, 40 + Math.sin(a) * 13 + Math.cos(a) * 16, -6.5];
+  }), 1.4, BRASS, backglass);
+  art.oval("backglass painted pinball", [-47, 54, -7], [23, 23, 1.5], CHROME, backglass, 1, 12);
+  for (const side of [-1, 1]) for (let star = 0; star < 4; star++) {
+    const x = side * (79 + star % 2 * 20), y = 23 + star * 13;
+    art.box("backglass star upright", [x, y, -5.5], [0.9, 5, 0.4], LAMP, backglass);
+    art.box("backglass star crossbar", [x, y, -5.5], [4, 0.9, 0.4], LAMP, backglass);
+  }
+  const title = art.sign("Tiltglass backglass title", "TILTGLASS", [0, 79, -5.6], 143, NAVY, 17);
+  title.parent = backglass;
+  art.batchModel(backglass, new Set([title]), true);
+  casters.push(...backglass.getChildMeshes().filter((mesh): mesh is Mesh => mesh instanceof Mesh));
   const polished = art.material(CHROME);
   polished.specularColor = new Color3(0.8, 0.87, 0.92);
   polished.specularPower = 112;
@@ -157,6 +212,7 @@ export function makeTiltglassWorld(art: Atelier, course: CourseQuery): CourseWor
       fill: "#b1c8e1", fillIntensity: 0.67, ground: TILTGLASS.palette.ground,
     },
     animate(time, reducedMotion = false) {
+      approaches.animate(time);
       for (const { hazard, root } of hazards) {
         root.position.set(...hazardPosition(hazard, time));
         if (hazard.id === "chrome-crossing") root.rotation.x = (root.position.z - hazard.position[2]) / hazard.radius;

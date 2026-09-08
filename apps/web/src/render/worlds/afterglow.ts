@@ -7,6 +7,7 @@ import type { CourseObstacle } from "../../../../../packages/content-layouts/typ
 import { buildCourseSurface } from "../course-surface";
 import type { Atelier, Triple } from "../geometry";
 import type { CourseWorld } from "../world-types";
+import { hazardApproaches, terrainMaterials } from "./terrain-art";
 
 const PEACH = "#ffd0ad", INK = "#464c7c", GLASS = "#80e4df", SIGNAL = "#ef78b3";
 
@@ -32,6 +33,42 @@ function solid(art: Atelier, obstacle: CourseObstacle): void {
 export function makeAfterglowWorld(art: Atelier, course: CourseQuery): CourseWorld {
   const casters: Mesh[] = [...buildCourseSurface(art, course, AFTERGLOW)];
   const scene = art.scene;
+  terrainMaterials(art, course, { low: "#334b68", high: "#81938c", rock: "#b5938b", lowY: -13, highY: 12 });
+
+  // A ground-level airfield gives the elevated route a scale reference and a visible drop.
+  for (const [index, x, z, yaw] of [[0, 245, -159, -0.3], [1, -307, -157, 0.7]]) {
+    const root = new TransformNode(`afterglow parked mailplane ${index}`, scene);
+    root.position.set(x, course.terrainHeight(x, z), z);
+    root.rotation.y = yaw;
+    art.loft("mailplane tapered fuselage", [[-31, 0.4, 5, 0.5], [-24, 3.3, 5.8, 3],
+      [-8, 4.4, 6.4, 3.7], [15, 3.1, 6, 2.8], [27, 0.4, 6.5, 0.6]], PEACH, root);
+    const wing = art.box("mailplane swept wing", [0, 5.8, -2], [56, 0.65, 9], GLASS, root);
+    wing.rotation.y = -0.16;
+    art.box("mailplane tailplane", [0, 6.8, 21], [20, 0.6, 5], SIGNAL, root);
+    const fin = art.oval("mailplane upright tail", [0, 11.2, 21], [0.8, 13, 9], SIGNAL, root, 0.7, 10);
+    fin.rotation.x = -0.3;
+    for (const side of [-1, 1]) {
+      art.oval("mailplane engine nacelle", [side * 11, 4.1, -4], [4.6, 4.6, 12], INK, root, 0.8, 10);
+      art.cylinder("mailplane landing strut", [side * 3, 1.8, 4], 0.4, 0.6, 3.6, INK, root);
+      art.oval("mailplane wheel", [side * 3, 0.6, 4], [1, 1.6, 1.6], INK, root, 1, 6);
+    }
+    art.oval("mailplane cockpit glass", [0, 7.5, -22], [5.5, 3.2, 6], GLASS, root, 0.8, 10);
+    art.batchModel(root, new Set(), true);
+    casters.push(...root.getChildMeshes().filter((mesh): mesh is Mesh => mesh instanceof Mesh));
+  }
+  // The return lane is an interchange, with open trusses rather than a floating ribbon.
+  for (const u of [0.54, 0.58, 0.64, 0.69, 0.80, 0.85, 0.92]) {
+    const p = course.sampleRoad(u);
+    for (const side of [-1, 1]) {
+      const x = p.x + p.dz * side * 5.5, z = p.z - p.dx * side * 5.5;
+      const foot = course.terrainHeight(x, z);
+      art.tube("airway diagonal deck brace", [[x, foot, z], [x + p.dx * 9, p.y - 2.4, z + p.dz * 9]], 0.45, PEACH);
+      art.tube("airway transverse bearing", [[x, p.y - 2, z], [p.x - p.dz * side * 5.5, p.y - 2, p.z + p.dx * side * 5.5]], 0.35, INK);
+    }
+    casters.push(...art.finishStatic());
+  }
+  const approaches = hazardApproaches(art, course, AFTERGLOW.hazards, { frame: PEACH, signal: SIGNAL, dark: INK });
+  casters.push(...approaches.casters);
 
   // Collision volumes are the visible solid cores; trim stays outside the driving envelope.
   for (const obstacle of AFTERGLOW.obstacles) {
@@ -223,6 +260,7 @@ export function makeAfterglowWorld(art: Atelier, course: CourseQuery): CourseWor
       sun: "#ffd1b0", sunIntensity: 1.05, fill: "#acb6ee", fillIntensity: 0.85, ground: "#626586",
     },
     animate(time, reducedMotion = false) {
+      approaches.animate(time);
       hazardRoots.forEach((root, index) => root.position.set(...hazardPosition(AFTERGLOW.hazards[index], time)));
       balloons.forEach((balloon, index) => {
         balloon.rotation.z = reducedMotion ? 0 : Math.sin(time * 0.3 + index * 1.7) * 0.055;

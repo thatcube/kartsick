@@ -302,7 +302,7 @@ describe("server-attested terminal rounds and circuit scheduling", () => {
 });
 
 describe("durable terminal checkpoints, authority departure and aborts", () => {
-  it.each([2, 3])("upgrades incompatible v%s persisted rooms without inventing results or losing seats", async version => {
+  it.each([2, 3, 4])("upgrades incompatible v%s persisted rooms without inventing results or losing seats", async version => {
     const t = setup(), host = await t.join();
     await t.start(host); await t.commit(host);
     const saved = t.engine.export();

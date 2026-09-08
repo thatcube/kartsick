@@ -39,6 +39,30 @@ Butterbell also has rolling harvest hazards shared by rendering and physics,
 raised pasture hills, and a hillside orchard. These are a new playable pass,
 not final graphics, handling or audio approval.
 
+The five other courses now have reworked landforms and more visible structure:
+airport berms, mailplanes and deck trusses; galleria terraces, conservatory and
+promenade undercrofts; arcade machinery wells and illustrated backglass; a
+canopy ravine, grounded root supports and a surrounding forest; and enclosing
+mountain ridges with exposed strata. Crossing warnings follow the real moving
+hazards, including a second airport baggage crossing and a moving galleria
+display. Lastlight retains the approved three-sector downhill format; it has
+not been converted into a summit climb.
+
+The tightest bends in Afterglow, Escaluna, Tiltglass and Copperwhistle were
+reshaped without altering manual steering or adding assists. High-resolution
+road samples now have minimum turning radii above 18.8 metres. Baseline-build
+corner-speed runs cover all three classes and both orientations, excluding
+startup and two seconds after contact; no qualifying corner tick stops.
+This supplements, rather than substitutes for, physical-controller feedback.
+The current course versions also complete the 108 representative drives and
+all 6,912 body/wheel/glider/class/orientation combinations without recovery.
+Native-browser world cycling and the full Lastlight descent remain covered.
+
+Terrain bounds now include reachable ridge tops and ravines, so a high mountain
+rescue remains valid in serialized snapshots. Protocol 5 prevents older course
+geometry from participating in the same online race or restoring an old
+checkpoint. Earlier rooms keep their seats but return to readiness.
+
 The initial human check used a keyboard and established basic functionality,
 not finished quality. Presentation and feel still need substantial work.
 **Controllers are the primary target.** That earlier keyboard check was not

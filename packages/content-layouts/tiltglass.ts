@@ -1,19 +1,24 @@
 import type { CourseLayout, Point3 } from "./types";
+import { latticeTerrain, mound, smoothTerrain } from "./terrain";
 
 const points: readonly Point3[] = [
   [-56, 3, -122], [-8, 3, -116], [52, 3, -108], [102, 4, -82],
   [120, 6, -32], [118, 10, 18], [110, 19, 66], [100, 15, 112],
-  [72, 13, 154], [24, 11, 174], [-22, 8, 165], [-50, 7, 130],
-  [-58, 6, 86], [-82, 5, 54], [-118, 4, 65], [-154, 3, 88],
-  [-190, 3, 68], [-206, 3, 20], [-196, 4, -28], [-167, 7, -64],
-  [-138, 10, -61], [-110, 9, -68], [-90, 6, -87], [-82, 4, -101],
+  [72, 13, 154], [24, 11, 174], [-22, 8, 165], [-52, 7, 129],
+  [-56, 6, 84], [-82, 5, 56], [-114, 4, 62], [-156, 3, 84],
+  [-193, 3, 71], [-206, 3, 20], [-198, 4, -29], [-170, 7, -61],
+  [-140, 10, -63], [-111, 9, -69], [-91, 6, -88], [-82, 4, -99],
 ];
+const bounds = { minX: -260, maxX: 180, minZ: -165, maxZ: 220 };
+const groundHeight = latticeTerrain(bounds, (x, z) =>
+  -3 - 9 * smoothTerrain((mound(x, z, -20, 67, 42, 40) - 0.3) / 0.5)
+  - 6 * smoothTerrain((mound(x, z, -166, 2, 19, 33) - 0.3) / 0.5));
 
 /** The table is recessed below every road, including the unsupported launch slot. */
 export const TILTGLASS: CourseLayout = {
   id: "tiltglass",
   name: "Tiltglass Arcade",
-  version: "tiltglass-2",
+  version: "tiltglass-3",
   format: "laps",
   points,
   halfWidth: 6.7,
@@ -27,7 +32,7 @@ export const TILTGLASS: CourseLayout = {
     name: "Under-flipper service lane",
     from: 0.5,
     to: 0.625,
-    points: [points[12], [-91, 4.5, 87], [-123, 3.2, 101], points[15]],
+    points: [points[12], [-91, 4.5, 84], [-123, 3.2, 98], points[15]],
     halfWidth: 3.1,
     rough: true,
   }],
@@ -57,8 +62,8 @@ export const TILTGLASS: CourseLayout = {
     sky: "#333d67", road: "#eee3cc", verge: "#b69370", rail: "#c7a15d",
     accent: "#d84756", secondary: "#263957", ground: "#26344f",
   },
-  bounds: { minX: -260, maxX: 180, minZ: -165, maxZ: 220 },
-  groundHeight: () => -3,
+  bounds,
+  groundHeight,
   waterLevel: -20,
   isWater: () => false,
 };

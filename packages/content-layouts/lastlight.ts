@@ -1,4 +1,5 @@
 import type { CourseLayout, CourseObstacle, Point3 } from "./types";
+import { mound, routeCutTerrain } from "./terrain";
 
 const points: readonly Point3[] = [
   [0, 354, 0], [45, 352, 55], [145, 345, 85], [250, 337, 110],
@@ -19,6 +20,8 @@ const points: readonly Point3[] = [
 const clamp = (value: number, low = 0, high = 1) => Math.max(low, Math.min(high, value));
 const smooth = (value: number) => { const t = clamp(value); return t * t * (3 - 2 * t); };
 const waterLevel = 3;
+const bounds = { minX: -576, maxX: 576, minZ: -128, maxZ: 2176 };
+const goatLedge: readonly Point3[] = [points[8], [-182, 289, 321], [-180, 280, 378], points[12]];
 
 function mountain(x: number, z: number): number {
   let index = 0;
@@ -29,19 +32,18 @@ function mountain(x: number, z: number): number {
   const viaduct = 32 * Math.exp(-(((z - 858) / 58) ** 2));
   const gorge = 42 * Math.exp(-(((z - 1455) / 62) ** 2));
   const lake = smooth((1 - Math.hypot((x - 447) / 203, (z - 1695) / 420)) / 0.27);
-  const valley = profile - 5 - viaduct - gorge + Math.sin(x * 0.009) * 0.7;
+  const ridge = smooth((Math.abs(x) - 280) / 190) * (95 + 75 * Math.sin(z * 0.006 + 1) ** 2);
+  const spurs = 68 * mound(x, z, 30, 344, 180, 42) + 76 * mound(x, z, -25, 544, 160, 44)
+    + 64 * mound(x, z, 30, 741, 145, 50) + 60 * mound(x, z, -15, 968, 150, 53)
+    + 48 * mound(x, z, 15, 1198, 135, 52);
+  const valley = profile - 7 - viaduct - gorge + ridge + spurs;
   return valley * (1 - lake) - 13 * lake;
 }
 
-/** The same 8 m triangle lattice as the rendered terrain, including its lakeshore. */
-function groundHeight(x: number, z: number): number {
-  const x0 = Math.floor(x / 8) * 8, z0 = Math.floor(z / 8) * 8;
-  const tx = (x - x0) / 8, tz = (z - z0) / 8;
-  const a = mountain(x0, z0), b = mountain(x0 + 8, z0), c = mountain(x0, z0 + 8);
-  if (tx + tz <= 1) return a + (b - a) * tx + (c - a) * tz;
-  const d = mountain(x0 + 8, z0 + 8);
-  return d + (c - d) * (1 - tx) + (b - d) * (1 - tz);
-}
+const groundHeight = routeCutTerrain({
+  points, closed: false, shortcuts: [goatLedge], bounds,
+  height: mountain, clearance: 5, cutWidth: 34,
+});
 
 function vergeStone(index: number, side: number): CourseObstacle {
   const a = points[index - 1], p = points[index], b = points[index + 1];
@@ -57,7 +59,7 @@ function vergeStone(index: number, side: number): CourseObstacle {
 export const LASTLIGHT: CourseLayout = {
   id: "lastlight",
   name: "Lastlight Switchbacks",
-  version: "lastlight-descent-1",
+  version: "lastlight-descent-2",
   format: "sectors",
   points,
   halfWidth: 6.7,
@@ -70,7 +72,7 @@ export const LASTLIGHT: CourseLayout = {
     id: "sunset-goat-ledge",
     name: "Sunset goat ledge",
     from: 8 / 48, to: 12 / 48,
-    points: [points[8], [-182, 289, 321], [-180, 280, 378], points[12]],
+    points: goatLedge,
     halfWidth: 3.4,
     rough: true,
   }],
@@ -88,7 +90,7 @@ export const LASTLIGHT: CourseLayout = {
     sky: "#c8b9df", road: "#817689", verge: "#c29471", rail: "#f5e5c3",
     accent: "#f5ac69", secondary: "#526b81", ground: "#b6907c",
   },
-  bounds: { minX: -576, maxX: 576, minZ: -128, maxZ: 2176 },
+  bounds,
   groundHeight,
   waterLevel,
   isWater: (x, z) => x >= -576 && x <= 576 && z >= -128 && z <= 2176 && groundHeight(x, z) < waterLevel,

@@ -1,9 +1,15 @@
 import type { CourseLayout } from "./types";
+import { latticeTerrain, mound, smoothTerrain } from "./terrain";
+
+const bounds = { minX: -275, maxX: 280, minZ: -250, maxZ: 175 };
+const groundHeight = latticeTerrain(bounds, (x, z) =>
+  8 * smoothTerrain((mound(x, z, -243, 19, 28, 65) - 0.35) / 0.45)
+  + 6 * smoothTerrain((mound(x, z, 102, -100, 30, 24) - 0.4) / 0.5));
 
 export const ESCALUNA: CourseLayout = {
   id: "escaluna",
   name: "Escaluna Galleria",
-  version: "escaluna-2",
+  version: "escaluna-3",
   format: "laps",
   points: [
     [-112, 1.2, -91], [-63, 1.2, -99], [-10, 1.2, -91], [34, 2, -68],
@@ -11,8 +17,8 @@ export const ESCALUNA: CourseLayout = {
     [181, 15, 46], [188, 13, -6], [188, 15, -61], [181, 13, -113],
     [151, 11, -154], [100, 4, -176], [37, 1.2, -171], [-25, 1.2, -194],
     [-99, 1.2, -201], [-168, 1.2, -164], [-178, 1.2, -89], [-173, 2, -25],
-    [-145, 5, 31], [-98, 7, 72], [-43, 7, 70], [-17, 5, 32],
-    [-37, 2, -9], [-86, 1.2, -14], [-130, 1.2, -41],
+    [-145, 5, 31], [-98, 7, 72], [-44, 7, 71], [-15, 5, 33],
+    [-37, 2, -3], [-90, 1.2, -13], [-126, 1.2, -42],
   ],
   halfWidth: 6.5,
   shoulderWidth: 7.2,
@@ -44,6 +50,7 @@ export const ESCALUNA: CourseLayout = {
     radius: 1.3,
     height: 2,
     strength: 8,
+    motion: { axis: "z", amplitude: 3.5, period: 12, phase: 0.4 },
   }],
   obstacles: [
     { id: "atrium-fountain", shape: "circle", position: [-76, 0, 26], radius: 11, height: 2.7 },
@@ -56,8 +63,8 @@ export const ESCALUNA: CourseLayout = {
     sky: "#aecadf", road: "#d0cbe3", verge: "#bca5b8", rail: "#fff2db",
     accent: "#b295d1", secondary: "#79cbdb", ground: "#d4ccca",
   },
-  bounds: { minX: -275, maxX: 280, minZ: -250, maxZ: 175 },
-  groundHeight: () => 0,
+  bounds,
+  groundHeight,
   waterLevel: -1,
   isWater: () => false,
 };

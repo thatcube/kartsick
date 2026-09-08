@@ -1,18 +1,26 @@
 import type { CourseLayout, CourseObstacle, Point3 } from "./types";
+import { mound, routeCutTerrain } from "./terrain";
 
 const points: readonly Point3[] = [
   [-130, 18, -135], [-65, 18, -140], [5, 19, -140], [75, 22, -135],
   [125, 26, -115], [150, 31, -70], [152, 35, -15], [152, 30, 45],
   [143, 29, 100], [107, 28, 143], [48, 26, 161], [-8, 23, 145],
-  [-43, 20, 107], [-88, 18, 100], [-138, 17, 129], [-186, 18, 106],
-  [-200, 21, 52], [-164, 23, 13], [-133, 24, -19], [-156, 22, -51],
-  [-210, 20, -48], [-242, 18, -76], [-221, 18, -118], [-177, 18, -132],
+  [-43, 20, 107], [-88, 18, 100], [-138, 17, 129], [-194, 18, 108],
+  [-202, 21, 51], [-155, 23, 12], [-135, 24, -22], [-151, 22, -46],
+  [-215, 20, -54], [-237, 18, -78], [-221, 18, -118], [-177, 18, -132],
 ];
+const bounds = { minX: -390, maxX: 330, minZ: -300, maxZ: 310 };
+const returnPoints: readonly Point3[] = [points[18], [-144, 19, -49], [-173, 15, -81], points[22]];
+const groundHeight = routeCutTerrain({
+  points, closed: true, shortcuts: [returnPoints], bounds, clearance: 6,
+  height: (x, z) => -7 + 20 * mound(x, z, -270, 100, 63, 130)
+    + 15 * mound(x, z, 80, 207, 130, 43) - 6 * mound(x, z, 200, 36, 27, 98),
+});
 
 export const AFTERGLOW: CourseLayout = {
   id: "afterglow",
   name: "Afterglow Airway",
-  version: "afterglow-1",
+  version: "afterglow-2",
   format: "laps",
   points,
   halfWidth: 6.7,
@@ -26,7 +34,7 @@ export const AFTERGLOW: CourseLayout = {
     name: "Express return",
     from: 18 / 24,
     to: 22 / 24,
-    points: [[-133, 24, -19], [-141, 19, -46], [-173, 15, -81], [-221, 18, -118]],
+    points: returnPoints,
     halfWidth: 3.5,
     rough: true,
   }],
@@ -38,6 +46,10 @@ export const AFTERGLOW: CourseLayout = {
     height: 2.2,
     strength: 8,
     motion: { axis: "z", amplitude: 5.2, period: 7.5, phase: 0.6 },
+  }, {
+    id: "arrival-baggage-pod", kind: "sweeper",
+    position: [48, 27.1, 161], radius: 1.45, height: 2.2, strength: 6,
+    motion: { axis: "z", amplitude: 8.5, period: 10.5, phase: 1.4 },
   }],
   obstacles: [
     { id: "terminal-core", shape: "box", position: [-15, -7, -94], halfX: 31, halfZ: 11, height: 39 },
@@ -55,8 +67,8 @@ export const AFTERGLOW: CourseLayout = {
     sky: "#6667a9", road: "#555c8d", verge: "#c09098", rail: "#ffd0ad",
     accent: "#ef78b3", secondary: "#80e4df", ground: "#3b4e79",
   },
-  bounds: { minX: -390, maxX: 330, minZ: -300, maxZ: 310 },
-  groundHeight: () => -7,
+  bounds,
+  groundHeight,
   waterLevel: -8,
   isWater: () => false,
 };

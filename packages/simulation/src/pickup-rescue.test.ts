@@ -66,6 +66,22 @@ describe("authoritative pickup roulette", () => {
 });
 
 describe("Towbell recovery", () => {
+  it.each([false, true])("preserves a mountain-ridge rescue in snapshots mirror=%s", mirror => {
+    const course = getCourse("lastlight", mirror);
+    const race = createRace({ courseId: "lastlight", speedClass: 100, mode: "time-trial", bots: false,
+      difficulty: "normal", mirror, seed: 91 }, [{ id: "kart", name: "Driver", players: ["driver", null], build: DEFAULT_BUILD }]);
+    const state = race.karts[0].state;
+    state.x = mirror ? 520 : -520;
+    state.z = 100;
+    state.y = course.terrainHeight(state.x, state.z) + .42;
+    expect(state.y).toBeGreaterThan(500);
+    expect(parseRaceState(race)).toEqual(race);
+    recoverKart(state, course);
+    expect(parseRaceState(race)).toEqual(race);
+    expect(state.rescue!.ceiling).toBeGreaterThan(state.rescue!.y);
+    expect(state.nextCheckpoint).toBe(1);
+  });
+
   it.each(COURSES.flatMap(course => [false, true].map(mirror => ({ id: course.id, mirror }))))(
     "reconstructs a protected lift/carry/lower on $id mirror=$mirror without progress grants", ({ id, mirror }) => {
       const course = getCourse(id, mirror), state = createKart(course);
