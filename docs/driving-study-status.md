@@ -19,6 +19,17 @@ Paired cases remain distinct, and collection/respawn motion is separate from the
 authoritative reveal. The cases use two batched meshes each and original
 procedural geometry rather than imported art.
 
+Engine audio now uses an original, seamless combustion-pulse waveform instead
+of a sustained oscillator tone. Five virtual gears have shift hysteresis and
+bounded RPM changes; throttle load, coasting, inferred heavy braking and gliding
+change the timbre and level without affecting driving physics. Roulette has
+slowing mechanical ticks and an authoritative settle sting, while Towbell has
+timed hook/lift/lower cues. All use the existing volume and pause controls.
+Native-browser mix coverage exercises all six arrangements and four simultaneous
+item-effect streams at full settings, with finite, nonclipping output and working
+suspend/resume/disposal. That does not replace listening on actual speakers or
+headphones; subjective engine and mix approval is still outstanding.
+
 Towbell, an original bell-shaped propeller tug, now visibly lifts, carries and
 lowers a stranded kart using a source/path stored in the simulation. Recovery
 reserves a safe road position within ordered progress, uses metre-based run-ups

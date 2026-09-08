@@ -4,6 +4,7 @@ import type { CourseId } from "@kartsick/content";
 import { createKart } from "@kartsick/simulation";
 import { DEFAULT_SETTINGS } from "./storage";
 import { Soundtrack } from "./audio";
+import { ENGINE } from "./audio-engine";
 
 class Param {
   value = 0;
@@ -21,7 +22,7 @@ class AudioNodeFake {
   disconnect() { this.disconnected = true; this.outputs = []; }
 }
 class Gain extends AudioNodeFake { gain = new Param(); }
-class Filter extends AudioNodeFake { type = ""; frequency = new Param(); }
+class Filter extends AudioNodeFake { type = ""; frequency = new Param(); Q = new Param(); }
 class Source extends AudioNodeFake {
   onended: (() => void) | null = null;
   startTime: number | null = null;
@@ -38,7 +39,7 @@ class Oscillator extends Source {
   periodic = false;
   setPeriodicWave() { this.periodic = true; }
 }
-class BufferSource extends Source { buffer: BufferFake | null = null; }
+class BufferSource extends Source { buffer: BufferFake | null = null; loop = false; playbackRate = new Param(); }
 class BufferFake {
   samples: Float32Array;
   constructor(length: number) { this.samples = new Float32Array(length); }
@@ -113,7 +114,7 @@ function run(fixture: Awaited<ReturnType<typeof make>>, seconds: number, racing 
     sound.update(state, racing, 0.5);
   }
 }
-const signature = (context: Context) => context.sources.filter(source => !(source instanceof Oscillator && source.periodic)).map(source => [
+const signature = (context: Context) => context.sources.filter(source => !(source instanceof BufferSource && source.loop)).map(source => [
   source instanceof Oscillator ? source.frequency.value : "noise",
   source instanceof Oscillator ? source.type : "noise",
   Math.round((source.startTime ?? 0) * 10000), Math.round((source.stopTime ?? 0) * 10000),
@@ -216,6 +217,9 @@ describe("activation, mixing and lifecycle", () => {
     sound.update(createKart(), true, 1);
     sound.event({ type: "boost" });
     sound.raceEvent({ type: "item-used", tick: 1, kartId: "kart", item: "fire" });
+    sound.raceEvent({ type: "pickup", tick: 1, kartId: "kart", item: "fire", effectId: "e1", value: 1.6 });
+    sound.raceEvent({ type: "item-ready", tick: 97, kartId: "kart", item: "fire", effectId: "e1" });
+    sound.raceEvent({ type: "recover", tick: 100, kartId: "kart" });
     expect(Context.instances).toHaveLength(0);
     page.hidden = true;
     await sound.activate();
@@ -331,14 +335,16 @@ describe("activation, mixing and lifecycle", () => {
   it("keeps engine load/gliding feedback and softly ducks music for important effects", async () => {
     const fixture = await make();
     fixture.state.speed = 30;
-    fixture.sound.update(fixture.state, true, 0.8);
-    const engine = fixture.context.sources[0] as Oscillator;
-    expect(engine.frequency.events.at(-1)?.value).toBeCloseTo(43 + 30 * 3.4 + 8);
+    run(fixture, 2);
+    const engine = fixture.context.sources[0] as BufferSource;
+    expect(engine.loop).toBe(true);
+    expect(engine.playbackRate.events.at(-1)?.value).toBeGreaterThan(ENGINE.idleRpm / 4800);
+    expect(engine.playbackRate.events.at(-1)?.value).toBeLessThanOrEqual(ENGINE.maxRpm / 4800);
     const engineGain = fixture.context.gains[5];
     const ground = engineGain.gain.events.at(-1)!.value;
     fixture.state.mode = "glider";
-    fixture.sound.update(fixture.state, true, 0.8);
-    expect(engineGain.gain.events.at(-1)?.value).toBeCloseTo(ground * 0.45);
+    run(fixture, 2);
+    expect(engineGain.gain.events.at(-1)?.value).toBeLessThan(ground * 0.45);
     fixture.sound.event({ type: "charge", tier: 3 });
     expect(fixture.context.gains[1].gain.events.at(-1)?.value).toBeCloseTo(DEFAULT_SETTINGS.music * 0.32 * 0.74);
     run(fixture, 0.4, false);
@@ -360,7 +366,7 @@ describe("activation, mixing and lifecycle", () => {
 
   it("keeps noise synthesis reproducible and all scheduled gains finite", async () => {
     const first = await make(), second = await make();
-    expect(first.context.buffers[0].samples).toEqual(second.context.buffers[0].samples);
+    expect(first.context.buffers.map(buffer => buffer.samples)).toEqual(second.context.buffers.map(buffer => buffer.samples));
     first.sound.settings.master = Number.NaN;
     first.sound.settings.music = -3;
     first.sound.settings.effects = 8;
@@ -399,6 +405,249 @@ describe("original item and driving feedback", () => {
     const gainCount = fixture.context.gains.length;
     fixture.sound.raceEvent({ type: "boost", tick: 1, kartId: "kart" }, 0.25);
     const peaks = fixture.context.gains.slice(gainCount).flatMap(node => node.gain.events.filter(event => event.method === "linear").map(event => event.value));
-    expect(peaks).toEqual([0.0875, 0.0875, 0.0875]);
+    expect(peaks.filter(value => value > 0)).toEqual([0.0875, 0.0875, 0.0875]);
+  });
+
+  it("distinguishes pickup, pass and steal with short softened two-part tells", async () => {
+    const signatures = new Set<string>();
+    for (const type of ["pickup", "pass", "steal"] as const) {
+      const fixture = await make("butterbell", { ...structuredClone(DEFAULT_SETTINGS), music: 0 });
+      fixture.sound.raceEvent({ type, tick: 1, kartId: "kart" });
+      const notes = fixture.context.sources.slice(1) as Oscillator[];
+      expect(notes).toHaveLength(2);
+      expect(notes.every(note => note.periodic)).toBe(true);
+      expect(notes[1].startTime! - notes[0].startTime!).toBeCloseTo(0.065);
+      expect(notes.every(note => note.stopTime! - note.startTime! <= 0.18)).toBe(true);
+      signatures.add(JSON.stringify(signature(fixture.context)));
+    }
+    expect(signatures.size).toBe(3);
+  });
+
+  it("uses body-filtered effects noise but preserves high-passed music percussion", async () => {
+    const fixture = await make();
+    run(fixture, 0.4);
+    expect(fixture.context.filters.some(filter => filter.type === "highpass" && filter.frequency.value === 5800)).toBe(true);
+    const count = fixture.context.filters.length;
+    fixture.sound.raceEvent({ type: "item-used", item: "fire", tick: 1, kartId: "kart" });
+    expect(fixture.context.filters[count].type).toBe("bandpass");
+    expect(fixture.context.filters[count].Q.value).toBe(0.65);
+  });
+
+  it("caps simultaneous effect peaks and fades their tails fully before stopping", async () => {
+    const fixture = await make("butterbell", { ...structuredClone(DEFAULT_SETTINGS), music: 0 });
+    for (let i = 0; i < 80; i++) fixture.sound.raceEvent({ type: "item-used", item: ITEM_IDS[i % ITEM_IDS.length], tick: i, kartId: "kart" });
+    const envelopes = fixture.context.gains.slice(6);
+    const reserved = envelopes.reduce((total, node) => total + Math.max(0, ...node.gain.events.map(event => event.value)), 0);
+    expect(reserved).toBeLessThanOrEqual(1.2 + 1e-12);
+    expect(envelopes.every(node => node.gain.events.at(-1)?.value === 0)).toBe(true);
+    fixture.context.advance(1);
+    const count = fixture.context.sources.length;
+    fixture.sound.raceEvent({ type: "item-used", item: "boost", tick: 100, kartId: "kart" });
+    expect(fixture.context.sources.length).toBeGreaterThan(count);
+  });
+});
+
+describe("authoritative item roulette and crane rescue cues", () => {
+  const pickup = { type: "pickup", tick: 1, kartId: "kart", effectId: "e1", item: "fire", value: 1.6 } as const;
+  const ready = { type: "item-ready", tick: 97, kartId: "kart", effectId: "e1", item: "fire" } as const;
+  const peaks = (gain: Gain) => gain.gain.events.filter(event => event.method === "linear" && event.value > 0);
+
+  it("uses one 18-tick slowing source independent of the undisclosed item, with no premature reveal", async () => {
+    const signatures = new Set<string>();
+    for (const item of ITEM_IDS) {
+      const fixture = await make("butterbell", { ...structuredClone(DEFAULT_SETTINGS), music: 0 });
+      fixture.sound.raceEvent({ ...pickup, item });
+      const roll = fixture.context.sources[1] as Oscillator;
+      expect(fixture.context.sources).toHaveLength(2);
+      expect(roll.periodic).toBe(true);
+      expect(roll.stopTime).toBe(1.6);
+      const attacks = peaks(fixture.context.gains[6]);
+      expect(attacks).toHaveLength(18);
+      const gaps = attacks.slice(1).map((attack, index) => attack.time - attacks[index].time);
+      for (let i = 1; i < gaps.length; i++) expect(gaps[i]).toBeGreaterThan(gaps[i - 1]);
+      expect(gaps.at(-1)!).toBeGreaterThan(gaps[0] * 5);
+      expect(attacks.at(-1)!.time).toBeGreaterThan(1.5);
+      expect(fixture.context.gains[6].gain.events.at(-1)!.time).toBeLessThan(1.6);
+      expect(fixture.context.gains[6].gain.events.at(-1)!.value).toBe(0);
+      signatures.add(JSON.stringify([signature(fixture.context), roll.frequency.events, fixture.context.gains[6].gain.events]));
+      fixture.context.advance(1.6);
+      expect(fixture.context.sources).toHaveLength(2);
+      expect(roll.disconnected).toBe(true);
+      await fixture.sound.dispose();
+    }
+    expect(signatures.size).toBe(1);
+  });
+
+  it("settles only on item-ready, cancels an early roll and ignores an overlapping duplicate reveal", async () => {
+    const fixture = await make("butterbell", { ...structuredClone(DEFAULT_SETTINGS), music: 0 });
+    fixture.sound.raceEvent(pickup);
+    const roll = fixture.context.sources[1];
+    fixture.context.advance(0.6);
+    fixture.sound.raceEvent(ready);
+    expect(roll.disconnected).toBe(true);
+    expect(roll.stopTime).toBe(0.6);
+    const sting = fixture.context.sources.slice(2) as Oscillator[];
+    expect(sting).toHaveLength(3);
+    expect(sting.every(source => source.periodic)).toBe(true);
+    expect(sting[0].frequency.value).toBe(180);
+    for (let i = 0; i < sting.length; i++) expect(sting[i].startTime! - 0.6).toBeCloseTo([0, 0.025, 0.085][i]);
+    expect(Math.max(...sting.map(source => source.stopTime!)) - 0.6).toBeCloseTo(0.285);
+    fixture.sound.raceEvent(ready);
+    expect(fixture.context.sources).toHaveLength(5);
+  });
+
+  it("can announce an authoritative ready item after missed/suspended pickup presentation", async () => {
+    const fixture = await make("butterbell", { ...structuredClone(DEFAULT_SETTINGS), music: 0 });
+    fixture.sound.raceEvent(ready);
+    expect(fixture.context.sources).toHaveLength(4);
+    expect(fixture.context.sources.slice(1).every(source => source.startTime! >= fixture.context.currentTime)).toBe(true);
+  });
+
+  it("matches independent rolls by kart and effect ID without restarting repeated pickups", async () => {
+    const fixture = await make("butterbell", { ...structuredClone(DEFAULT_SETTINGS), music: 0 });
+    fixture.sound.raceEvent(pickup);
+    fixture.sound.raceEvent(pickup);
+    fixture.sound.raceEvent({ ...pickup, effectId: "e2" });
+    fixture.sound.raceEvent({ ...pickup, kartId: "other" });
+    expect(fixture.context.sources).toHaveLength(4);
+    fixture.context.advance(0.5);
+    fixture.sound.raceEvent(ready);
+    expect(fixture.context.sources[1].disconnected).toBe(true);
+    expect(fixture.context.sources[2].disconnected).toBe(false);
+    expect(fixture.context.sources[3].disconnected).toBe(false);
+  });
+
+  it.each([undefined, 0, -1, Number.NaN, Infinity])("keeps an ordinary pickup tell for missing/invalid roll duration %s", async value => {
+    const fixture = await make("butterbell", { ...structuredClone(DEFAULT_SETTINGS), music: 0 });
+    fixture.sound.raceEvent({ ...pickup, value });
+    expect(fixture.context.sources).toHaveLength(3);
+    expect(fixture.context.sources.slice(1).every(source => source.stopTime! < 0.3)).toBe(true);
+  });
+
+  it("caps roll duration, sources and peak reservations under repeated pickups", async () => {
+    const fixture = await make("butterbell", { ...structuredClone(DEFAULT_SETTINGS), music: 0 });
+    for (let i = 0; i < 100; i++) fixture.sound.raceEvent({ ...pickup, effectId: `e${i}`, value: 1e9 });
+    expect(fixture.context.sources.length).toBeLessThanOrEqual(49);
+    expect(fixture.context.sources.slice(1).every(source => source.stopTime! <= 1.6)).toBe(true);
+    const reserved = fixture.context.gains.slice(6).reduce((sum, node) => sum + Math.max(0, ...peaks(node).map(peak => peak.value)), 0);
+    expect(reserved).toBeLessThanOrEqual(1.2 + 1e-12);
+    fixture.context.advance(10);
+    expect(fixture.context.sources.slice(1).every(source => source.disconnected)).toBe(true);
+  });
+
+  it("preserves roll/sting attenuation and consumes an early ready event silently at zero gain", async () => {
+    const full = await make(), quiet = await make();
+    full.sound.raceEvent(pickup);
+    quiet.sound.raceEvent(pickup, 0.25);
+    expect(peaks(quiet.context.gains[6]).map(event => event.value)).toEqual(peaks(full.context.gains[6]).map(event => event.value * 0.25));
+    full.sound.raceEvent(ready);
+    quiet.sound.raceEvent(ready, 0.25);
+    expect(quiet.context.gains.slice(7).flatMap(peaks).map(event => event.value)).toEqual(full.context.gains.slice(7).flatMap(peaks).map(event => event.value * 0.25));
+    const silent = await make();
+    silent.sound.raceEvent(pickup, 0);
+    silent.sound.raceEvent(ready, 0);
+    silent.sound.raceEvent({ type: "recover", tick: 1, kartId: "kart" }, 0);
+    expect(silent.context.sources).toHaveLength(1);
+    silent.sound.raceEvent(pickup);
+    silent.sound.raceEvent(ready, 0);
+    expect(silent.context.sources).toHaveLength(2);
+    expect(silent.context.sources[1].disconnected).toBe(true);
+  });
+
+  it("shapes six quiet hook/lift/carry/lower/drop voices over the 1.8-second rescue", async () => {
+    const direct = await make("butterbell", { ...structuredClone(DEFAULT_SETTINGS), music: 0 });
+    const race = await make("butterbell", { ...structuredClone(DEFAULT_SETTINGS), music: 0 });
+    direct.sound.event({ type: "recover" });
+    race.sound.raceEvent({ type: "recover", tick: 1, kartId: "kart" });
+    expect(signature(direct.context)).toEqual(signature(race.context));
+    const voices = race.context.sources.slice(1);
+    expect(voices).toHaveLength(6);
+    expect(voices.map(source => source.startTime)).toEqual([0, 0.05, 0.4, 1.3, 1.68, 1.68]);
+    expect(Math.max(...voices.map(source => source.stopTime!))).toBeCloseTo(1.795);
+    const lift = voices[1] as Oscillator, lower = voices[3] as Oscillator;
+    expect(lift.frequency.events.at(-1)?.value).toBeGreaterThan(lift.frequency.value);
+    expect(lower.frequency.events.at(-1)?.value).toBeLessThan(lower.frequency.value);
+    expect(voices[5]).toBeInstanceOf(BufferSource);
+    expect(race.context.gains.slice(6).flatMap(peaks).every(peak => peak.value <= 0.16)).toBe(true);
+    race.sound.raceEvent({ type: "recover", tick: 1, kartId: "kart" });
+    expect(race.context.sources).toHaveLength(7);
+    race.context.advance(1.8);
+    expect(voices.every(source => source.disconnected)).toBe(true);
+  });
+
+  it.each(["hidden", "suspend", "dispose", "menu", "master-mute", "effects-mute"] as const)(
+    "cancels all pending roulette/rescue/reveal stages on %s without replaying after resume", async action => {
+      const fixture = await make("butterbell", { ...structuredClone(DEFAULT_SETTINGS), music: 0 });
+      fixture.sound.raceEvent(pickup);
+      fixture.sound.raceEvent({ ...ready, effectId: "e2" });
+      fixture.sound.raceEvent({ type: "recover", tick: 1, kartId: "kart" });
+      fixture.context.advance(0.25);
+      const count = fixture.context.sources.length;
+      if (action === "hidden") {
+        page.hidden = true;
+        page.dispatchEvent(new Event("visibilitychange"));
+        await Promise.resolve();
+        page.hidden = false;
+      } else if (action === "suspend") await fixture.sound.suspend();
+      else if (action === "dispose") await fixture.sound.dispose();
+      else {
+        if (action === "master-mute") fixture.sound.settings.master = 0;
+        if (action === "effects-mute") fixture.sound.settings.effects = 0;
+        fixture.sound.update(fixture.state, action !== "menu", 0);
+      }
+      expect(fixture.context.sources.slice(1).every(source => source.disconnected)).toBe(true);
+      fixture.sound.settings.master = 1;
+      fixture.sound.settings.effects = 1;
+      await fixture.sound.activate();
+      run(fixture, 2);
+      expect(fixture.context.sources).toHaveLength(count);
+    },
+  );
+});
+
+describe("bounded persistent engine graph", () => {
+  it("keeps a single loop and two non-resonant filters through a long top-speed drive", async () => {
+    const fixture = await make("butterbell", { ...structuredClone(DEFAULT_SETTINGS), music: 0 });
+    fixture.state.speed = 37;
+    run(fixture, 30);
+    const engine = fixture.context.sources[0] as BufferSource;
+    const automation = engine.playbackRate.events.length;
+    run(fixture, 30);
+    expect(fixture.context.sources).toHaveLength(1);
+    expect(fixture.context.buffers).toHaveLength(2);
+    expect(fixture.context.filters).toHaveLength(2);
+    expect(fixture.context.filters.every(filter => filter.Q.value <= 0.55)).toBe(true);
+    const rpm = engine.playbackRate.events.map(event => event.value * 4800);
+    expect(rpm.every(value => value >= ENGINE.idleRpm && value <= ENGINE.maxRpm)).toBe(true);
+    expect(engine.playbackRate.events).toHaveLength(automation);
+    const peaks = fixture.context.gains[5].gain.events.map(event => event.value);
+    expect(Math.max(...peaks) * ENGINE.peak * 0.3).toBeLessThan(0.044);
+    expect(engine.startTime).toBe(0);
+    expect(engine.stopTime).toBeNull();
+  });
+
+  it("mutes recovery, menu and finish and restarts after suspension without stale high revs", async () => {
+    const fixture = await make("butterbell", { ...structuredClone(DEFAULT_SETTINGS), music: 0 });
+    const engine = fixture.context.sources[0] as BufferSource;
+    fixture.state.speed = 37;
+    run(fixture, 2);
+    fixture.state.recovery = 1;
+    fixture.sound.update(fixture.state, true, 1);
+    expect(fixture.context.gains[5].gain.events.at(-1)?.value).toBe(0);
+    fixture.state.recovery = 0;
+    run(fixture, 1);
+    fixture.state.finished = true;
+    fixture.sound.update(fixture.state, true, 1);
+    expect(fixture.context.gains[5].gain.events.at(-1)?.value).toBe(0);
+    fixture.state.finished = false;
+    run(fixture, 1);
+    await fixture.sound.suspend();
+    expect(engine.playbackRate.events.at(-1)?.value).toBe(ENGINE.idleRpm / 4800);
+    await fixture.sound.activate();
+    fixture.sound.update(fixture.state, true, 1);
+    expect(engine.playbackRate.events.at(-1)!.value * 4800).toBeLessThanOrEqual(ENGINE.idleRpm + ENGINE.risePerSecond / 60);
+    fixture.sound.update(fixture.state, false, 1);
+    expect(fixture.context.gains[5].gain.events.at(-1)?.value).toBe(0);
+    expect(fixture.context.sources).toHaveLength(1);
   });
 });

@@ -2,6 +2,7 @@ import { COURSE_IDS, clamp } from "@kartsick/content";
 import type { CourseId, ItemId } from "@kartsick/content";
 import type { DrivingEvent, KartState, RaceEvent } from "@kartsick/simulation";
 import type { Settings } from "./storage";
+import { ENGINE, combustionSamples, createEngineState, stepEngine } from "./audio-engine";
 
 type Line = readonly (number | null)[];
 type Patch = "wood" | "glass" | "piano" | "mallet" | "flute" | "brass";
@@ -121,7 +122,7 @@ const PATCHES: Record<Patch, readonly [OscillatorType, number, number, number]> 
 const frequency = (note: number) => 440 * 2 ** ((note - 69) / 12);
 const level = (value: number) => Number.isFinite(value) ? clamp(value, 0, 1) : 0;
 const hidden = () => typeof document !== "undefined" && document.hidden;
-interface Voice { source: AudioScheduledSourceNode; nodes: AudioNode[]; channel: GainNode; end: number }
+interface Voice { source: AudioScheduledSourceNode; nodes: AudioNode[]; channel: GainNode; end: number; peak: number; cue?: string }
 
 export class Soundtrack {
   private context: AudioContext | null = null;
@@ -139,9 +140,14 @@ export class Soundtrack {
   private listening = false;
   private duckUntil = 0;
   private volumes = [Number.NaN, Number.NaN, Number.NaN];
-  private engine: OscillatorNode | null = null;
+  private engine: AudioBufferSourceNode | null = null;
   private engineGain: GainNode | null = null;
   private engineFilter: BiquadFilterNode | null = null;
+  private engineRumble: BiquadFilterNode | null = null;
+  private engineState = createEngineState();
+  private engineTime: number | null = null;
+  private engineTargets = [Number.NaN, Number.NaN, Number.NaN];
+  private itemWave: PeriodicWave | null = null;
   private noise: AudioBuffer | null = null;
   private nextBeat = 0;
   private beat = 0;
@@ -190,17 +196,27 @@ export class Soundtrack {
         layer.gain.value = index === 0 ? 1 : 0;
         layer.connect(this.music!);
       });
-      this.engine = this.context.createOscillator();
-      this.engine.setPeriodicWave(this.context.createPeriodicWave(
-        new Float32Array(5), new Float32Array([0, 1, 0.45, 0.2, 0.06]),
-      ));
+      this.engine = this.context.createBufferSource();
+      const combustion = combustionSamples(this.context.sampleRate);
+      const engineBuffer = this.context.createBuffer(1, combustion.length, this.context.sampleRate);
+      engineBuffer.getChannelData(0).set(combustion);
+      this.engine.buffer = engineBuffer;
+      this.engine.loop = true;
+      // Four-stroke exhaust: one firing for every two crank revolutions.
+      this.engine.playbackRate.value = ENGINE.idleRpm / (120 * ENGINE.baseFiringHz);
       this.engineGain = this.context.createGain();
       this.engineGain.gain.value = 0;
       this.engineFilter = this.context.createBiquadFilter();
       this.engineFilter.type = "lowpass";
-      this.engineFilter.frequency.value = 400;
-      this.engine.connect(this.engineFilter).connect(this.engineGain).connect(this.effects);
+      this.engineFilter.Q.value = 0.55;
+      this.engineFilter.frequency.value = 420;
+      this.engineRumble = this.context.createBiquadFilter();
+      this.engineRumble.type = "highpass";
+      this.engineRumble.frequency.value = 25;
+      this.engineRumble.Q.value = 0.5;
+      this.engine.connect(this.engineRumble).connect(this.engineFilter).connect(this.engineGain).connect(this.effects);
       this.engine.start();
+      this.itemWave = this.context.createPeriodicWave(new Float32Array(5), new Float32Array([0, 1, 0.16, 0.055, 0.018]));
       this.noise = this.context.createBuffer(1, Math.ceil(this.context.sampleRate * 0.5), this.context.sampleRate);
       const samples = this.noise.getChannelData(0);
       let seed = 0x4b415254;
@@ -245,6 +261,15 @@ export class Soundtrack {
     this.release(voice);
   }
 
+  private stopCue(cue?: string): void {
+    for (const voice of this.voices) if (voice.cue !== undefined && (cue === undefined || voice.cue === cue)) this.stopVoice(voice);
+  }
+
+  private hasCue(cue: string): boolean {
+    for (const voice of this.voices) if (voice.cue === cue) return true;
+    return false;
+  }
+
   private available(channel: GainNode): boolean {
     if (!this.running || level(this.settings.master) === 0) return false;
     const effect = channel === this.effects;
@@ -257,17 +282,27 @@ export class Soundtrack {
     return this.voices.size < 48;
   }
 
-  private track(source: AudioScheduledSourceNode, nodes: AudioNode[], channel: GainNode, end: number): void {
-    const voice = { source, nodes, channel, end };
+  private track(source: AudioScheduledSourceNode, nodes: AudioNode[], channel: GainNode, end: number, peak: number, cue?: string): void {
+    const voice = { source, nodes, channel, end, peak, cue };
     this.voices.add(voice);
     source.onended = () => this.release(voice);
   }
 
-  private note(hz: number, duration: number, gain: number, channel: GainNode, time: number, type: OscillatorType = "sine", endHz?: number, attack = 0.008): void {
+  private effectHeadroom(gain: number, channel: GainNode): number {
+    if (channel !== this.effects) return gain;
+    // Reserve future attacks too, so a burst of overlapping item tells cannot pile up.
+    let reserved = 0;
+    for (const voice of this.voices) if (voice.channel === channel) reserved += voice.peak;
+    return Math.max(0, Math.min(gain, 1.2 - reserved));
+  }
+
+  private note(hz: number, duration: number, gain: number, channel: GainNode, time: number, type: OscillatorType | "item" = "sine", endHz?: number, attack = 0.008, cue?: string): void {
+    gain = this.effectHeadroom(gain, channel);
     if (!this.context || gain <= 0 || !this.available(channel)) return;
     const oscillator = this.context.createOscillator();
     const envelope = this.context.createGain();
-    oscillator.type = type;
+    if (type === "item") oscillator.setPeriodicWave(this.itemWave!);
+    else oscillator.type = type;
     oscillator.frequency.value = hz;
     if (endHz !== undefined) {
       oscillator.frequency.setValueAtTime(hz, time);
@@ -275,28 +310,83 @@ export class Soundtrack {
     }
     envelope.gain.setValueAtTime(0, time);
     envelope.gain.linearRampToValueAtTime(gain, time + Math.min(attack, duration * 0.45));
-    envelope.gain.exponentialRampToValueAtTime(0.001, time + duration);
+    envelope.gain.exponentialRampToValueAtTime(Math.min(0.001, gain), time + duration);
+    if (channel === this.effects) envelope.gain.linearRampToValueAtTime(0, time + duration + 0.015);
     oscillator.connect(envelope).connect(channel);
     oscillator.start(time);
     oscillator.stop(time + duration + 0.02);
-    this.track(oscillator, [oscillator, envelope], channel, time + duration + 0.02);
+    this.track(oscillator, [oscillator, envelope], channel, time + duration + 0.02, gain, cue);
   }
 
-  private percussion(duration: number, gain: number, cutoff: number, channel: GainNode, time: number): void {
+  private percussion(duration: number, gain: number, cutoff: number, channel: GainNode, time: number, cue?: string): void {
+    gain = this.effectHeadroom(gain, channel);
     if (!this.context || !this.noise || gain <= 0 || !this.available(channel)) return;
     const source = this.context.createBufferSource();
     const filter = this.context.createBiquadFilter();
     const envelope = this.context.createGain();
     source.buffer = this.noise;
-    filter.type = "highpass";
+    filter.type = channel === this.effects ? "bandpass" : "highpass";
+    if (channel === this.effects) filter.Q.value = 0.65;
     filter.frequency.value = cutoff;
     envelope.gain.setValueAtTime(0, time);
     envelope.gain.linearRampToValueAtTime(gain, time + 0.003);
-    envelope.gain.exponentialRampToValueAtTime(0.001, time + duration);
+    envelope.gain.exponentialRampToValueAtTime(Math.min(0.001, gain), time + duration);
+    if (channel === this.effects) envelope.gain.linearRampToValueAtTime(0, time + duration + 0.008);
     source.connect(filter).connect(envelope).connect(channel);
     source.start(time);
     source.stop(time + duration + 0.01);
-    this.track(source, [source, filter, envelope], channel, time + duration + 0.01);
+    this.track(source, [source, filter, envelope], channel, time + duration + 0.01, gain, cue);
+  }
+
+  private roulette(time: number, duration: number, volume: number, cue: string): void {
+    if (!this.context || !this.effects || this.hasCue(cue) || !this.available(this.effects)) return;
+    const peak = this.effectHeadroom(0.055 * volume, this.effects);
+    if (peak <= 0) return;
+    const source = this.context.createOscillator();
+    const envelope = this.context.createGain();
+    source.setPeriodicWave(this.itemWave!);
+    source.frequency.value = 620;
+    envelope.gain.value = 0;
+    // One source with widening gates, not eighteen reserved voices or a timer queue.
+    const ticks = 18;
+    const span = duration - 0.07;
+    for (let i = 0; i < ticks; i++) {
+      const progress = i / (ticks - 1);
+      const offset = span * progress ** 1.65;
+      const next = i + 1 < ticks ? span * ((i + 1) / (ticks - 1)) ** 1.65 : duration;
+      const gate = Math.min(0.026, (next - offset) * 0.7);
+      const at = time + offset;
+      const hz = 620 - progress * 280 + (i % 2 ? 30 : 0);
+      source.frequency.setValueAtTime(hz, at);
+      source.frequency.exponentialRampToValueAtTime(hz * 0.76, at + gate);
+      envelope.gain.setValueAtTime(0, at);
+      envelope.gain.linearRampToValueAtTime(peak * (0.72 + progress * 0.28), at + gate * 0.25);
+      envelope.gain.exponentialRampToValueAtTime(Math.min(0.0001, peak * 0.01), at + gate * 0.8);
+      envelope.gain.linearRampToValueAtTime(0, at + gate);
+    }
+    source.connect(envelope).connect(this.effects);
+    source.start(time);
+    source.stop(time + duration);
+    this.track(source, [source, envelope], this.effects, time + duration, peak, cue);
+  }
+
+  private itemReady(time: number, volume: number, cue: string): void {
+    if (this.hasCue(cue)) return;
+    const channel = this.effects!;
+    this.note(180, 0.07, 0.14 * volume, channel, time, "item", 90, 0.004, cue);
+    this.note(frequency(79), 0.11, 0.14 * volume, channel, time + 0.025, "item", undefined, 0.008, cue);
+    this.note(frequency(86), 0.18, 0.1 * volume, channel, time + 0.085, "item", undefined, 0.012, cue);
+  }
+
+  private rescue(time: number, volume: number, cue: string): void {
+    if (this.hasCue(cue)) return;
+    const channel = this.effects!;
+    this.note(270, 0.08, 0.09 * volume, channel, time, "item", 160, 0.006, cue);
+    this.note(165, 0.34, 0.1 * volume, channel, time + 0.05, "item", 340, 0.035, cue);
+    this.note(200, 0.82, 0.035 * volume, channel, time + 0.4, "sine", 180, 0.1, cue);
+    this.note(300, 0.35, 0.085 * volume, channel, time + 1.3, "item", 145, 0.03, cue);
+    this.note(92, 0.095, 0.16 * volume, channel, time + 1.68, "sine", 35, 0.008, cue);
+    this.percussion(0.075, 0.09 * volume, 450, channel, time + 1.68, cue);
   }
 
   private play(patch: Patch, midi: number, time: number, gain: number, gate = 1): void {
@@ -370,11 +460,23 @@ export class Soundtrack {
     this.updateVolumes();
     const now = this.context.currentTime;
     for (const voice of this.voices) if (voice.end <= now) this.release(voice);
-    const speed = Number.isFinite(state.speed) ? clamp(Math.abs(state.speed), 0, 150) : 0;
-    const load = level(throttle);
-    this.engine?.frequency.setTargetAtTime(43 + speed * 3.4 + load * 10, now, 0.07);
-    this.engineFilter?.frequency.setTargetAtTime(260 + speed * 14 + load * 150, now, 0.08);
-    this.engineGain?.gain.setTargetAtTime(racing ? (0.06 + speed / 230 + load * 0.07) * (state.mode === "glider" ? 0.45 : 1) : 0, now, 0.07);
+    if (!racing || level(this.settings.master) === 0 || level(this.settings.effects) === 0) this.stopCue();
+    const elapsed = this.engineTime === null ? 1 / 60 : Math.max(0, now - this.engineTime);
+    this.engineTime = now;
+    this.engineState = stepEngine(this.engineState, {
+      speed: state.speed, throttle, mode: state.mode, boosting: state.boost > 0,
+      active: racing && !state.finished && !(state.recovery > 0),
+    }, elapsed);
+    const targets = [this.engineState.rpm / (120 * ENGINE.baseFiringHz), this.engineState.cutoff, this.engineState.gain];
+    const parameters = [this.engine!.playbackRate, this.engineFilter!.frequency, this.engineGain!.gain];
+    const tolerance = [0.0002, 0.5, 0.00002];
+    for (let i = 0; i < targets.length; i++) {
+      const previous = this.engineTargets[i], target = targets[i];
+      if (!Number.isFinite(previous) || Math.abs(target - previous) > tolerance[i] || target === 0 && previous !== 0) {
+        parameters[i].setTargetAtTime(target, now, i === 0 ? 0.035 : 0.045);
+        this.engineTargets[i] = target;
+      }
+    }
     // Skip missed transport steps after a stall; never synthesize a backlog of old notes.
     const oldInterval = 60 / this.score.bpm / 4;
     if (this.nextBeat < now - 0.4) {
@@ -409,24 +511,27 @@ export class Soundtrack {
       this.percussion(0.1, 0.2 * volume, 380, this.effects, now);
       return;
     }
+    if (event.type === "recover") {
+      this.rescue(now, volume, "rescue:driver");
+      return;
+    }
 
     const melody = event.type === "charge" ? [61 + event.tier * 5] :
       event.type === "boost" ? [72, 79, 84] : event.type === "launch" ? [69, 76, 81] :
         event.type === "lap" || event.type === "finish" ? [72, 76, 79, 84] :
-          event.type === "recover" ? [57, 52] :
-            event.type === "swap" ? [65, 69] : [45];
+          event.type === "swap" ? [65, 69] : [45];
     melody.forEach((note, i) => this.note(frequency(note), 0.14, 0.35 * volume, this.effects!, now + i * 0.045, "triangle"));
   }
 
   private item(id: ItemId, time: number, volume: number): void {
     const channel = this.effects!;
     const ping = (midi: number, offset = 0, duration = 0.14, amplitude = 0.22) =>
-      this.note(frequency(midi), duration, amplitude * volume, channel, time + offset, "sine");
+      this.note(frequency(midi), duration, amplitude * volume, channel, time + offset, "item", undefined, 0.012);
     const puff = (cutoff: number, duration = 0.1, amplitude = 0.14) =>
       this.percussion(duration, amplitude * volume, cutoff, channel, time);
     switch (id) {
       case "slip": case "triple-slip":
-        puff(2700, 0.13); this.note(520, 0.16, 0.12 * volume, channel, time, "triangle", 180);
+        puff(1200, 0.13); this.note(420, 0.16, 0.12 * volume, channel, time, "item", 160);
         if (id === "triple-slip") { ping(66, 0.08, 0.08); ping(62, 0.16, 0.08); } break;
       case "bounce": case "triple-bounce":
         this.note(210, 0.22, 0.23 * volume, channel, time, "sine", 630);
@@ -435,17 +540,17 @@ export class Soundtrack {
         ping(78); ping(85, 0.075);
         if (id === "triple-homing") { ping(90, 0.15); ping(85, 0.225, 0.09); } break;
       case "leader": ping(69, 0, 0.22); ping(81, 0.12, 0.24); ping(86, 0.24, 0.25); break;
-      case "bomb": ping(49, 0, 0.24); this.note(1400, 0.025, 0.09 * volume, channel, time + 0.09, "triangle"); break;
+      case "bomb": ping(49, 0, 0.24); this.note(760, 0.045, 0.07 * volume, channel, time + 0.09, "item"); break;
       case "boost": case "triple-boost": case "rapid-boost":
-        puff(3800, 0.17, 0.1); ping(74, 0, 0.15); ping(81, 0.055, 0.17);
+        puff(1700, 0.17, 0.1); ping(74, 0, 0.15); ping(81, 0.055, 0.17);
         if (id === "triple-boost") ping(86, 0.13, 0.16);
         if (id === "rapid-boost") this.note(220, 0.28, 0.11 * volume, channel, time, "triangle", 740);
         break;
       case "invincible": [72, 76, 83, 86].forEach((note, i) => ping(note, i * 0.045, 0.3, 0.16)); break;
-      case "shrink": this.note(1700, 0.32, 0.18 * volume, channel, time, "sine", 190); ping(64, 0.12, 0.22); break;
+      case "shrink": this.note(1100, 0.32, 0.16 * volume, channel, time, "sine", 190); ping(64, 0.12, 0.22); break;
       case "autopilot": this.note(145, 0.3, 0.14 * volume, channel, time, "triangle", 410); ping(79, 0.04); ping(86, 0.14); break;
-      case "vision": puff(3100, 0.25, 0.18); ping(82, 0.03, 0.2, 0.08); break;
-      case "theft": puff(5900, 0.17, 0.07); ping(88, 0, 0.2, 0.13); ping(81, 0.08, 0.24, 0.13); break;
+      case "vision": puff(1450, 0.25, 0.15); ping(82, 0.03, 0.2, 0.08); break;
+      case "theft": puff(2400, 0.17, 0.07); ping(88, 0, 0.2, 0.13); ping(81, 0.08, 0.24, 0.13); break;
       case "fire": puff(950, 0.14, 0.22); this.note(175, 0.15, 0.15 * volume, channel, time, "triangle", 65); break;
       case "returning":
         this.note(690, 0.15, 0.16 * volume, channel, time, "sine", 1160);
@@ -453,11 +558,11 @@ export class Soundtrack {
       case "shockwave": this.note(150, 0.22, 0.28 * volume, channel, time, "sine", 38); ping(90, 0.02, 0.28, 0.09); break;
       case "roadwork":
         for (let i = 0; i < 3; i++) { this.note(430 + i * 170, 0.055, 0.2 * volume, channel, time + i * 0.075, "triangle"); }
-        puff(2100, 0.08, 0.09); break;
+        puff(1300, 0.08, 0.09); break;
       case "velvet": ping(65, 0, 0.19); ping(72, 0.08, 0.15); ping(77, 0.15, 0.12, 0.1); break;
       case "static":
-        this.note(180, 0.2, 0.17 * volume, channel, time, "triangle", 1060);
-        this.note(360, 0.15, 0.085 * volume, channel, time + 0.055, "sine", 1600); break;
+        this.note(180, 0.2, 0.17 * volume, channel, time, "item", 650);
+        this.note(360, 0.15, 0.085 * volume, channel, time + 0.055, "sine", 980); break;
       case "doubles":
         this.note(320, 0.18, 0.16 * volume, channel, time, "sine", 890);
         this.note(490, 0.21, 0.13 * volume, channel, time + 0.09, "sine", 1120); break;
@@ -465,21 +570,32 @@ export class Soundtrack {
   }
 
   raceEvent(event: RaceEvent, gain = 1): void {
-    if (!this.context || !this.effects || !this.available(this.effects)) return;
+    if (!this.context || !this.effects || !this.running) return;
+    const held = `${event.kartId}:${event.effectId ?? ""}`;
+    if (event.type === "item-ready") this.stopCue(`roulette:${held}`);
+    if (!this.available(this.effects)) return;
     const volume = level(gain);
     if (volume === 0) return;
     if (event.type === "charge") { this.event({ type: "charge", tier: clamp(event.value ?? 1, 1, 3) }, volume); return; }
     if (event.type === "lap" || event.type === "finish") { this.event({ type: event.type, time: event.value ?? 0 }, volume); return; }
     switch (event.type) {
-      case "boost": case "launch": case "land": case "recover": case "swap": case "collision": this.event({ type: event.type }, volume); return;
+      case "boost": case "launch": case "land": case "swap": case "collision": this.event({ type: event.type }, volume); return;
     }
     const now = this.context.currentTime;
     this.duckUntil = now + 0.22;
     this.updateVolumes();
     if (event.type === "start" || event.type === "double-start" || event.type === "start-boost") {
       [72, 79, 84].forEach((note, index) => this.note(frequency(note), 0.2, 0.23 * volume, this.effects!, now + index * 0.07, "triangle"));
+    } else if (event.type === "recover") {
+      this.rescue(now, volume, `rescue:${event.kartId}`);
+    } else if (event.type === "item-ready") {
+      this.itemReady(now, volume, `ready:${held}`);
+    } else if (event.type === "pickup" && Number.isFinite(event.value) && event.value! > 0) {
+      this.roulette(now, clamp(event.value!, 0.2, 1.6), volume, `roulette:${held}`);
     } else if (event.type === "pickup" || event.type === "pass" || event.type === "steal") {
-      this.note(frequency(event.type === "steal" ? 65 : 81), 0.18, 0.24 * volume, this.effects, now, "sine", frequency(88));
+      const notes = event.type === "pickup" ? [76, 83] : event.type === "pass" ? [72, 79] : [83, 72];
+      notes.forEach((midi, index) => this.note(frequency(midi), index ? 0.16 : 0.09,
+        (index ? 0.13 : 0.18) * volume, this.effects!, now + index * 0.065, "item", undefined, 0.012));
     } else if (event.type === "item-used") {
       if (event.item) this.item(event.item, now, volume);
     } else if (event.type === "hit") {
@@ -502,6 +618,11 @@ export class Soundtrack {
     this.master?.gain.setValueAtTime(0, this.context.currentTime);
     this.engineGain?.gain.cancelScheduledValues(this.context.currentTime);
     this.engineGain?.gain.setValueAtTime(0, this.context.currentTime);
+    this.engineState = createEngineState();
+    this.engineTime = null;
+    this.engineTargets.fill(Number.NaN);
+    this.engine?.playbackRate.cancelScheduledValues(this.context.currentTime);
+    this.engine?.playbackRate.setValueAtTime(ENGINE.idleRpm / (120 * ENGINE.baseFiringHz), this.context.currentTime);
     for (const voice of this.voices) this.stopVoice(voice);
     await this.context.suspend();
   }
@@ -515,6 +636,7 @@ export class Soundtrack {
     this.engine?.stop();
     this.engine?.disconnect();
     this.engineFilter?.disconnect();
+    this.engineRumble?.disconnect();
     this.engineGain?.disconnect();
     for (const layer of this.layers) layer.disconnect();
     this.music?.disconnect();
