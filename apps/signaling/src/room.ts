@@ -55,8 +55,8 @@ export class RoomEngine {
   readonly state: StoredRoom;
   expired = false;
   constructor(code: string, private readonly now: () => number = Date.now, saved?: StoredRoom) {
-    // Version 2 could not attest terminal state. Retain membership, but never infer its old race's results.
-    if (saved && Number(saved.room.version) === 2) {
+    // Old simulations cannot restore the new inventory/recovery state. Retain seats, not incompatible checkpoints.
+    if (saved && [2, 3].includes(Number(saved.room.version))) {
       saved = {
         ...saved,
         room: {

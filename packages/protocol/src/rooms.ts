@@ -8,7 +8,7 @@ import type { RaceResult } from "../../simulation/src/race.ts";
 import { array, boolean, byteLength, choice, id, keys, nullableId, object, text, uint } from "./validation.ts";
 export { byteLength, json } from "./validation.ts";
 
-export const NETWORK_VERSION = 3;
+export const NETWORK_VERSION = 4;
 export const SIGNAL_MAX_BYTES = 24_576;
 /** Leaves room for the largest welcome envelope and its resume credential. */
 export const ROOM_MAX_BYTES = SIGNAL_MAX_BYTES - 256;

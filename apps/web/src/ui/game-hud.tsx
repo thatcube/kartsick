@@ -8,7 +8,10 @@ export interface HudView {
   label: string;
   viewport: ViewportRect;
 }
-export interface HeldItemView { id: ItemId; name: string; color: string; count: number }
+export interface HeldItemView {
+  id: ItemId; name: string; color: string; count: number;
+  spinning: boolean; progress: number; token: string;
+}
 export interface HudValues {
   id: string;
   position: number;
@@ -68,7 +71,12 @@ export function updateGameHud(root: HTMLElement, frame: HudFrame): void {
       const name = slot.querySelector<HTMLElement>("[data-item-name]");
       const count = slot.querySelector<HTMLElement>("[data-item-count]");
       slot.dataset.empty = String(item === null);
-      slot.setAttribute("aria-label", item ? `${index === 0 ? view.driver : view.rear}: ${item.name}, ${item.count} remaining` : `${index === 0 ? view.driver : view.rear}: no item`);
+      const settled = item && !item.spinning && slot.dataset.spinning === "true" && slot.dataset.token === item.token;
+      slot.dataset.spinning = String(item?.spinning ?? false);
+      slot.dataset.settled = String(!!settled || !!item && !item.spinning && slot.dataset.token === item.token && slot.dataset.settled === "true");
+      slot.dataset.token = item?.token ?? "";
+      slot.style.setProperty("--roulette-progress", String(item?.progress ?? 0));
+      slot.setAttribute("aria-label", item ? `${index === 0 ? view.driver : view.rear}: ${item.spinning ? "choosing an item" : `${item.name}, ${item.count} remaining`}` : `${index === 0 ? view.driver : view.rear}: no item`);
       if (item) {
         use?.setAttribute("href", `#item-glyph-${item.id}`);
         slot.style.setProperty("--item-color", item.color);
@@ -109,6 +117,7 @@ export function GameHud({ views, visible, rootRef, pause, map }: {
         {[0, 1].map(index => <div key={index} className="held-item" data-item-slot={index} data-empty="true" role="img" aria-label="No item">
           <span className="item-rider" data-race={index === 0 ? "driver" : "rear"} />
           <svg viewBox="0 0 48 48" aria-hidden="true"><use /></svg><b data-item-count /><span data-item-name>Empty</span>
+          <i className="roulette-progress" aria-hidden="true" />
         </div>)}
       </div>
       <div className="race-message"><strong data-race="tell" /><span data-race="charge" /><b data-race="finishCountdown" /></div>

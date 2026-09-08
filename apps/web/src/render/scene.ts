@@ -2,6 +2,7 @@ import { Color3 } from "@babylonjs/core/Maths/math.color";
 import type { DriverInput, KartState } from "@kartsick/simulation";
 import type { Settings } from "../storage";
 import { makeKart } from "./kart";
+import { makeTowbell } from "./rescue";
 import { DrivingFeedback } from "./feedback";
 import { ChaseCamera, updateKartPose } from "./driving-pose";
 import { applyStageQuality, createStage } from "./stage";
@@ -12,6 +13,7 @@ export class StudyScene {
   readonly scene;
   readonly camera;
   private readonly kart;
+  private readonly rescue;
   private readonly contact;
   private readonly feedback: DrivingFeedback;
   private readonly chase: ChaseCamera;
@@ -24,6 +26,7 @@ export class StudyScene {
     this.camera = this.stage.camera;
     try {
       this.kart = makeKart(this.stage.art);
+      this.rescue = makeTowbell(this.stage.art);
       for (const mesh of this.kart.meshes) {
         this.stage.shadows.addShadowCaster(mesh);
         mesh.receiveShadows = true;
@@ -53,9 +56,13 @@ export class StudyScene {
     const position = this.kart.root.position;
     this.contact.position.set(position.x, position.y - 0.35, position.z);
     this.contact.rotation.y = this.kart.root.rotation.y;
-    this.contact.setEnabled(state.mode === "ground");
-    this.stage.world.animate(settings.reducedMotion ? 0 : this.time);
-    this.feedback.update(state, position, this.kart.root.rotation.y, moving, settings.reducedMotion);
+    this.contact.setEnabled(state.mode === "ground" && state.recovery === 0);
+    this.rescue.root.setEnabled(state.recovery > 0);
+    this.rescue.root.position.copyFrom(position);
+    this.rescue.root.rotation.y = this.kart.root.rotation.y;
+    this.rescue.rotor.rotation.y = settings.reducedMotion ? .45 : state.tick * .7;
+    this.stage.world.animate(menu ? this.time : state.tick / 60, settings.reducedMotion);
+    this.feedback.update(state, position, this.kart.root.rotation.y, moving && state.recovery === 0, settings.reducedMotion);
     this.chase.update(position, this.kart.root.rotation.y, state, bounded, menu, this.time, settings);
     this.stage.light.position.set(position.x + 47, position.y + 83, position.z - 30);
     this.scene.render();

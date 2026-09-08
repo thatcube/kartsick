@@ -1,4 +1,4 @@
-import { CHARACTERS, COURSES, ITEMS, getCourse } from "@kartsick/content";
+import { CHARACTERS, COURSES, getCourse } from "@kartsick/content";
 import type { KartBuild } from "@kartsick/content";
 import { NEUTRAL_PLAYER, RACE_LIMITS, copyRace, createKart, standings } from "@kartsick/simulation";
 import type { RaceEntry, RaceEvent, RaceOptions, RaceState } from "@kartsick/simulation";
@@ -15,7 +15,8 @@ import { OnlineRaceSession, roomRace } from "./online-race";
 import type { KartsickNetwork } from "./network";
 import { RaceScene } from "./render/race-scene";
 import type { RacerFrame } from "./render/race-scene";
-import type { HeldItemView, HudFrame, HudView } from "./ui/game-hud";
+import type { HudFrame, HudView } from "./ui/game-hud";
+import { heldItemView } from "./ui/item-roulette";
 
 export type RaceMode = "loading" | "menu" | "race" | "paused" | "results";
 export interface RaceRuntimeCallbacks extends Omit<LocalInputCallbacks, "visibility" | "rebound"> {
@@ -28,12 +29,6 @@ export interface RaceRuntimeCallbacks extends Omit<LocalInputCallbacks, "visibil
   failure: (message: string) => void;
 }
 const characterName = (id: string) => CHARACTERS.find(character => character.id === id)?.name ?? id;
-const itemView = (held: RaceState["karts"][number]["held"][number]): HeldItemView | null => {
-  if (!held) return null;
-  const item = ITEMS.find(item => item.id === held.item);
-  if (!item) throw new Error("The held item has no content definition.");
-  return { id: held.item, name: item.name, color: item.color, count: held.charges };
-};
 const PREVIEW_OPTIONS: RaceOptions = { courseId: "butterbell", mode: "race", speedClass: 100, mirror: false, bots: false, difficulty: "normal", seed: 1 };
 
 export class RaceRuntime {
@@ -321,10 +316,10 @@ export class RaceRuntime {
           id: kart.id, position: places.find(place => place.id === kart.id)?.position ?? 1, fieldSize: race.karts.length,
           lap: state.lap, laps: course.format === "sectors" ? 3 : course.laps, time: state.elapsed, lapTime: state.elapsed - state.lapStart,
           speed: state.speed, driftCharge: state.driftCharge, driver: characterName(kart.build.characters[driver]), rear: characterName(kart.build.characters[rear]),
-          frontItem: itemView(kart.held[driver]), rearItem: itemView(kart.held[rear]), vision: kart.status.vision > 0, invincible: kart.status.invincible > 0,
+          frontItem: heldItemView(kart.held[driver], this.settings.reducedMotion), rearItem: heldItemView(kart.held[rear], this.settings.reducedMotion), vision: kart.status.vision > 0, invincible: kart.status.invincible > 0,
           courseName: COURSES.find(course => course.id === race.options.courseId)!.name, sector: course.format === "sectors", finished: state.finished,
           ghostTime: this.ghost?.time ?? null,
-          tell: state.finished ? "FINISHED" : kart.ai ? "TEMPORARY AI TAKEOVER" : state.recovery > 0 ? "BACK ON TRACK" :
+          tell: state.finished ? "FINISHED" : kart.ai ? "TEMPORARY AI TAKEOVER" : state.recovery > 0 ? "TOWBELL TO THE RESCUE" :
             kart.status.autopilot > 0 ? "COMEBACK AUTOPILOT" : kart.status.stun > 0 ? "HIT!" : state.wrongWay ? "WRONG WAY" :
               kart.status.shrink > 0 ? "SHRUNK" : state.mode === "glider" ? "GLIDING" : state.mode === "air" ? "AIRBORNE" :
                 state.boost > 0 ? "BOOST!" : state.driftCharge === 3 ? "RELEASE DRIFT" : state.driftDirection ? "COUNTERSTEER OUT, THEN IN" : state.offRoad ? "OFF ROAD" : "",

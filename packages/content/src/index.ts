@@ -15,7 +15,7 @@ export interface RoadPoint extends Point {
   dz: number;
 }
 
-export const STUDY_VERSION = "butterbell-study-2";
+export const STUDY_VERSION = "butterbell-pastures-3";
 export const ROAD_WIDTH = 13;
 export const SHOULDER_WIDTH = ROAD_WIDTH / 2 + 0.6;
 export const WATER_LEVEL = 0.42;
@@ -39,7 +39,9 @@ function pastureHeight(x: number, z: number): number {
 
 export function terrainHeight(x: number, z: number): number {
   const pond = ((x - 77) / 36) ** 2 + ((z + 14) / 27) ** 2;
-  return pastureHeight(x, z) - Math.max(0, 1 - pond) * 3.5;
+  const westHill = 22 * Math.exp(-(((x + 118) / 44) ** 2) - ((z - 68) / 90) ** 2);
+  const eastHill = 19 * Math.exp(-(((x - 214) / 34) ** 2) - ((z - 106) / 65) ** 2);
+  return pastureHeight(x, z) + westHill + eastHill - Math.max(0, 1 - pond) * 3.5;
 }
 
 export function isWater(x: number, z: number): boolean {

@@ -63,6 +63,16 @@ export interface ActiveCourseHazard {
   radius: number; height: number; strength: number;
 }
 
+/** Canonical positions are shared with the moving farm props; the query reflects them for mirror races. */
+export function butterbellHazards(time: number): ActiveCourseHazard[] {
+  return [.18, .865].map((u, index) => {
+    const p = sampleRoad(u);
+    const lane = (index ? -1 : 1) * (4.9 + Math.sin(time * Math.PI * 2 / 7 + index) * 1.1);
+    return { id: `hay-roller-${index}`, kind: "bumper", x: p.x + p.dz * lane, z: p.z - p.dx * lane,
+      y: p.y + .95, radius: 1.1, height: 1.9, strength: 4 };
+  });
+}
+
 export function checkpointSpan(course: CourseQuery, next: number) {
   const count = course.checkpoints.length;
   const previous = course.checkpoints[(next - 1 + count) % count];
@@ -99,7 +109,7 @@ export function getCourse(id: CourseId = "butterbell", mirror = false): CourseQu
     waterLevel: WATER_LEVEL, gapStart: GAP_START, gapEnd: GAP_END, length: TRACK_LENGTH,
     glides: [{ start: GAP_START, end: GAP_END }], sectors: [],
     bounds: { minX: -240, maxX: 240, minZ: -245, maxZ: 245, minY: -12, maxY: 200 },
-    hazards: () => [],
+    hazards: time => butterbellHazards(time).map(hazard => ({ ...hazard, x: hazard.x * sign })),
     road: ROAD.map(point), checkpoints: CHECKPOINTS.map(point),
     colliders: SCENERY_COLLIDERS.map(c => ({ ...c, x: c.x * sign })),
     sampleRoad: u => point(sampleRoad(u)),

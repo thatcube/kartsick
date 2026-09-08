@@ -10,7 +10,7 @@ interface EventRule {
   optional?: readonly Detail[];
   global?: boolean;
   target?: "kart" | "reference";
-  value?: "tier" | "seconds" | "bumpers" | "slide" | "takeover";
+  value?: "tier" | "seconds" | "bumpers" | "slide" | "takeover" | "roulette";
 }
 
 const simple: EventRule = { required: [] };
@@ -29,7 +29,8 @@ const rules: Record<RaceEvent["type"], EventRule> = {
   lap: { required: ["value"], value: "seconds" },
   finish: { required: ["value"], value: "seconds" },
   "race-finished": { required: [], global: true },
-  pickup: effect,
+  pickup: { ...effect, optional: ["value"], value: "roulette" },
+  "item-ready": effect,
   "item-used": effect,
   spawn: effect,
   expire: effect,
@@ -65,6 +66,7 @@ function validValue(value: unknown, kind: EventRule["value"]): value is number {
     case "bumpers": return integer(value, 0, 3);
     case "slide": return value === -1 || value === 1;
     case "takeover": return value === 0 || value === 1;
+    case "roulette": return value === 1.6;
     default: return false;
   }
 }

@@ -2,6 +2,7 @@ import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import type { FreeCamera } from "@babylonjs/core/Cameras/freeCamera";
 import { angleDifference, clamp, lerp, surfaceHeight } from "@kartsick/content";
 import type { DriverInput, KartState } from "@kartsick/simulation";
+import { rescuePose } from "@kartsick/simulation";
 import type { Settings } from "../storage";
 import type { KartModel, KartVisualEffects } from "./kart";
 
@@ -9,20 +10,22 @@ export type SurfaceQuery = (x: number, z: number) => number;
 
 export function updateKartPose(model: KartModel, previous: KartState, state: KartState, input: DriverInput, alpha: number, dt: number,
   moving: boolean, settings: Settings, surface: SurfaceQuery = surfaceHeight, started = true, effects?: KartVisualEffects): void {
-  const x = lerp(previous.x, state.x, alpha);
-  const y = lerp(previous.y, state.y, alpha);
-  const z = lerp(previous.z, state.z, alpha);
-  const yaw = previous.yaw + angleDifference(state.yaw, previous.yaw) * alpha;
+  const recovering = state.rescue !== null && state.recovery > 0;
+  const before = rescuePose(previous), after = rescuePose(state);
+  const x = lerp(before.x, after.x, alpha);
+  const y = lerp(before.y, after.y, alpha);
+  const z = lerp(before.z, after.z, alpha);
+  const yaw = before.yaw + angleDifference(after.yaw, before.yaw) * alpha;
   const front = surface(x + Math.sin(yaw) * 0.8, z + Math.cos(yaw) * 0.8);
   const rear = surface(x - Math.sin(yaw) * 0.8, z - Math.cos(yaw) * 0.8);
   const slope = Math.atan2(front - rear, 1.6);
-  const pitch = state.mode === "ground" ? -slope : -Math.atan2(state.vy, Math.max(1, Math.abs(state.speed))) * 0.4 - input.pitch * 0.1;
+  const pitch = recovering ? 0 : state.mode === "ground" ? -slope : -Math.atan2(state.vy, Math.max(1, Math.abs(state.speed))) * 0.4 - input.pitch * 0.1;
   model.root.position.set(x, y, z);
   model.root.rotation.set(
     lerp(model.root.rotation.x, pitch, started ? 1 - Math.exp(-dt * 12) : 1),
     yaw, settings.reducedMotion ? 0 : input.steer * Math.min(Math.abs(state.speed) / 500, 0.07),
   );
-  model.root.setEnabled(state.recovery < 0.55 || Math.floor(state.tick / 4) % 2 === 0);
+  model.root.setEnabled(true);
   model.animate(state, input, moving ? dt : 0, settings.reducedMotion, effects);
 }
 

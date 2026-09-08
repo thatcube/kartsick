@@ -7,6 +7,22 @@ single-kart Butterbell study remains available at `/?study` for controller compa
 The main entry runs the expanded local and direct-online development build.
 This is not the complete Kartsick release or the final production art/audio package.
 
+The current feedback pass adds a 1.6-second authoritative item roulette, with
+decelerating HUD symbols, a settling cue, and a steady-symbol progress indicator
+under reduced motion. The chosen result is reserved at collection and cannot be
+used during the spin; character swaps/passing and checkpoint restoration retain
+that exact inventory. Mystery items are not stealable until revealed. Fixed
+time-trial boosts and identifiable dropped items do not roll.
+
+Towbell, an original bell-shaped propeller tug, now visibly lifts, carries and
+lowers a stranded kart using a source/path stored in the simulation. Recovery
+reserves a safe road position within ordered progress, uses metre-based run-ups
+before flight gaps, and ignores repeated recovery requests during its 1.8-second
+sequence. Controls, item hits and kart contacts cannot interrupt the carry.
+Butterbell also has rolling harvest hazards shared by rendering and physics,
+raised pasture hills, and a hillside orchard. These are a new playable pass,
+not final graphics, handling or audio approval.
+
 The initial human check used a keyboard and established basic functionality,
 not finished quality. Presentation and feel still need substantial work.
 **Controllers are the primary target.** That earlier keyboard check was not

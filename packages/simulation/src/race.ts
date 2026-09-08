@@ -47,6 +47,7 @@ export interface HeldItem {
   /** -1 before first use; otherwise seconds remaining in the active reuse window. */
   ttl: number;
   cooldown: number;
+  roulette: number;
 }
 export interface RaceKart extends RaceEntry {
   state: KartState;
@@ -112,7 +113,7 @@ export interface RaceResult {
   points: number;
 }
 export interface RaceState {
-  version: 1;
+  version: 2;
   options: RaceOptions;
   tick: number;
   phase: "countdown" | "racing" | "finishing" | "finished";
@@ -126,7 +127,7 @@ export interface RaceState {
 }
 export interface RaceEvent {
   type: "start" | "start-boost" | "double-start" | "charge" | "boost" | "launch" | "land" | "recover" |
-    "swap" | "collision" | "lap" | "finish" | "race-finished" | "pickup" | "item-used" | "spawn" |
+    "swap" | "collision" | "lap" | "finish" | "race-finished" | "pickup" | "item-ready" | "item-used" | "spawn" |
     "expire" | "hit" | "blocked" | "reflect" | "deflect" | "steal" | "pass" | "slide" | "takeover";
   tick: number;
   kartId: string;
@@ -196,7 +197,7 @@ export function createRace(options: RaceOptions, entries: readonly RaceEntry[]):
     }
   }
   const race: RaceState = {
-    version: 1, options: { ...options }, tick: 0, phase: "countdown", rng: options.seed || 0x6d2b79f5,
+    version: 2, options: { ...options }, tick: 0, phase: "countdown", rng: options.seed || 0x6d2b79f5,
     nextId: 1, firstFinishTick: null, karts: [], items: [], pickups: [], results: [],
   };
   race.karts = roster.map((e, index) => {
@@ -274,8 +275,9 @@ export function standings(race: RaceState): RaceResult[] {
     progress: kartProgress(k, course), points: RACE_POINTS[index],
   }));
 }
+export const ITEM_ROULETTE_SECONDS = 1.6;
 function makeHeld(race: RaceState, item: ItemId): HeldItem {
-  return { id: uniqueId(race), item, charges: item.startsWith("triple-") ? 3 : item === "static" ? 2 : item === "rapid-boost" ? 20 : 1, ttl: -1, cooldown: 0 };
+  return { id: uniqueId(race), item, charges: item.startsWith("triple-") ? 3 : item === "static" ? 2 : item === "rapid-boost" ? 20 : 1, ttl: -1, cooldown: 0, roulette: 0 };
 }
 /** Validated authority/test grant; false means occupied slot, TT restriction or unavailable capacity. */
 export function grantItem(race: RaceState, kartId: string, item: ItemId, seat?: 0 | 1): boolean {
@@ -377,7 +379,7 @@ function discharge(race: RaceState, kart: RaceKart, id: string, events: RaceEven
 }
 function useItem(race: RaceState, kart: RaceKart, direction: -1 | 1, events: RaceEvent[]): void {
   const slot = rear(kart), held = kart.held[slot];
-  if (!held || held.cooldown > 0 || kart.status.stun > 0 || kart.state.recovery > 0) return;
+  if (!held || held.roulette > 0 || held.cooldown > 0 || kart.status.stun > 0 || kart.state.recovery > 0) return;
   const course = getCourse(race.options.courseId, race.options.mirror);
   const s = kart.state;
   const roadOnly = ITEM_INTERACTIONS[held.item].roadOnly;
@@ -458,12 +460,12 @@ function useItem(race: RaceState, kart: RaceKart, direction: -1 | 1, events: Rac
 function stealHeld(race: RaceState, thief: RaceKart, victim: RaceKart, source: string, events: RaceEvent[], dropFront: boolean): boolean {
   const slot = rear(thief), victimRear = rear(victim), victimFront = victim.state.driver;
   if (thief.held[slot] || protectedKart(victim)) return false;
-  const take = victim.held[victimRear] ? victimRear : victimFront;
-  if (!victim.held[take]) return false;
+  const take = victim.held[victimRear]?.roulette === 0 ? victimRear : victimFront;
+  if (!victim.held[take] || victim.held[take]!.roulette > 0) return false;
   thief.held[slot] = victim.held[take];
   victim.held[take] = null;
   emit(race, events, { type: "steal", kartId: thief.id, targetId: victim.id, effectId: source, item: thief.held[slot]!.item });
-  if (dropFront && take === victimRear && victim.held[victimFront]) {
+  if (dropFront && take === victimRear && victim.held[victimFront]?.roulette === 0) {
     const dropped = victim.held[victimFront]!;
     if (race.items.length >= RACE_LIMITS.effects || race.items.filter(e => e.owner === victim.id).length >= RACE_LIMITS.effectsPerKart) {
       const owned = race.items.filter(e => e.owner === victim.id);
@@ -515,7 +517,7 @@ function effectContact(race: RaceState, e: WorldEffect, kart: RaceKart, events: 
   if (e.kind === "dropped") {
     const slot = rear(kart);
     if (!kart.held[slot]) {
-      kart.held[slot] = { id: uniqueId(race), item: e.item, charges: e.charges, cooldown: .2, ttl: -1 };
+      kart.held[slot] = { id: uniqueId(race), item: e.item, charges: e.charges, cooldown: .2, ttl: -1, roulette: 0 };
       e.ttl = 0;
       emit(race, events, { type: "pickup", kartId: kart.id, effectId: e.id, item: e.item });
     }
@@ -776,7 +778,7 @@ function contacts(race: RaceState, events: RaceEvent[]): void {
     }
   }
 }
-function tickInventory(kart: RaceKart): void {
+function tickInventory(race: RaceState, kart: RaceKart, events: RaceEvent[]): void {
   for (const key of STATUS_KEYS) {
     kart.status[key] = Math.max(0, kart.status[key] - STEP);
     if (kart.status[key] === 0) kart.statusIds[key] = null;
@@ -784,6 +786,10 @@ function tickInventory(kart: RaceKart): void {
   for (const slot of [0, 1] as const) {
     const held = kart.held[slot];
     if (!held) continue;
+    if (held.roulette > 0) {
+      held.roulette = Math.max(0, held.roulette - STEP);
+      if (held.roulette === 0) emit(race, events, { type: "item-ready", kartId: kart.id, effectId: held.id, item: held.item });
+    }
     held.cooldown = Math.max(0, held.cooldown - STEP);
     if (held.ttl >= 0) { held.ttl = Math.max(0, held.ttl - STEP); if (held.ttl === 0) kart.held[slot] = null; }
   }
@@ -832,7 +838,7 @@ export function stepRace(race: RaceState, inputs: Readonly<Record<string, Player
   for (let index = 0; index < race.karts.length; index++) {
     const kart = race.karts[index], seats = controls[index], s = kart.state;
     if (s.finished) {
-      tickInventory(kart);
+      tickInventory(race, kart, events);
       s.boost = Math.max(0, s.boost - STEP);
       if (s.boost === 0) kart.boostId = null;
       kart.previous = seats;
@@ -844,7 +850,7 @@ export function stepRace(race: RaceState, inputs: Readonly<Record<string, Player
       if (seats[seat].swap && !kart.previous[seat].swap) kart.swapRequests[seat] = race.tick;
     }
     if (race.phase === "countdown") { kart.previous = seats; continue; }
-    tickInventory(kart);
+    tickInventory(race, kart, events);
     if (race.tick <= RACE_LIMITS.countdownTicks + 8) {
       const frontPress = kart.startPress[s.driver];
       const rearPress = kart.startPress[rear(kart)];
@@ -914,13 +920,14 @@ export function stepRace(race: RaceState, inputs: Readonly<Record<string, Player
     pickup.cooldown = Math.max(0, pickup.cooldown - STEP);
     if (pickup.cooldown > 0) continue;
     for (const kart of race.karts) {
-      if (kart.state.finished || kart.state.recovery > 0 || distance(kart.state, pickup) > 1.6 || Math.abs(kart.state.y - pickup.y) > 2) continue;
+      if (kart.state.finished || kart.state.recovery > 0 || distance(kart.state, pickup) > 2.2 || Math.abs(kart.state.y - pickup.y) > 2) continue;
       const slots: (0 | 1)[] = pickup.double ? [rear(kart), kart.state.driver] : [rear(kart)];
       let collected = false;
       for (const slot of slots) if (!kart.held[slot]) {
         const item = randomItem(race, kart, slot);
         kart.held[slot] = makeHeld(race, item); collected = true;
-        emit(race, events, { type: "pickup", kartId: kart.id, effectId: kart.held[slot]!.id, item });
+        kart.held[slot]!.roulette = ITEM_ROULETTE_SECONDS;
+        emit(race, events, { type: "pickup", kartId: kart.id, effectId: kart.held[slot]!.id, item, value: ITEM_ROULETTE_SECONDS });
       }
       if (collected) { pickup.cooldown = 5; break; }
     }
@@ -965,6 +972,12 @@ function validKartState(value: unknown, tick: number, course: CourseQuery): valu
   if (!["driftDirection", "driftCharge", "nextCheckpoint", "lap", "driver", "recoveries", "tick"].every(k => Number.isInteger(value[k]))) return false;
   if (!["counterArmed", "previousRecover", "previousSwap", "finished", "offRoad", "wrongWay"].every(k => typeof value[k] === "boolean")) return false;
   if (!["ground", "air", "glider"].includes(value.mode as string)) return false;
+  const rescue = value.rescue;
+  if (rescue !== null && (!record(rescue) || !keys(rescue, ["x", "y", "z", "yaw", "ceiling"]) ||
+    !["x", "y", "z"].every(k => finite(rescue[k], -12000, 12000)) ||
+    !finite(rescue.ceiling, Math.max(rescue.y as number, value.y as number) + 5, 12000) ||
+    !finite(rescue.yaw, -Math.PI - .001, Math.PI + .001))) return false;
+  if ((value.recovery === 0) !== (value.rescue === null)) return false;
   if (!Array.isArray(value.lapTimes) || value.lapTimes.length > stages || !value.lapTimes.every(t => finite(t, 0, 1800))) return false;
   if ((value.lapStart as number) > (value.elapsed as number) || (value.finished && value.lapTimes.length !== stages)) return false;
   if (!value.finished && value.lapTimes.length !== (value.lap as number) - 1) return false;
@@ -985,7 +998,7 @@ function validEffectKind(item: ItemId, kind: EffectKind): boolean {
 export function parseRaceState(value: unknown): RaceState | null {
   try {
     if (!record(value) || !keys(value, ["version", "options", "tick", "phase", "rng", "nextId", "firstFinishTick", "karts", "items", "pickups", "results"])) return null;
-    if (value.version !== 1 || !optionsValid(value.options) || !keys(value.options as unknown as Record<string, unknown>, ["courseId", "mode", "speedClass", "mirror", "bots", "difficulty", "seed"]) ||
+    if (value.version !== 2 || !optionsValid(value.options) || !keys(value.options as unknown as Record<string, unknown>, ["courseId", "mode", "speedClass", "mirror", "bots", "difficulty", "seed"]) ||
       !integer(value.tick, 0, RACE_LIMITS.maximumTicks) || !integer(value.rng, 1, 0xffffffff) || !integer(value.nextId, 1, RACE_LIMITS.maximumId)) return null;
     const tick = value.tick, nextId = value.nextId;
     const course = getCourse(value.options.courseId, value.options.mirror);
@@ -1013,11 +1026,12 @@ export function parseRaceState(value: unknown): RaceState | null {
       if (!Array.isArray(k.held) || k.held.length !== 2) return null;
       for (const h of k.held) {
         if (h === null) continue;
-        if (!record(h) || !keys(h, ["id", "item", "charges", "ttl", "cooldown"]) || !addId(h.id) ||
+        if (!record(h) || !keys(h, ["id", "item", "charges", "ttl", "cooldown", "roulette"]) || !addId(h.id) ||
           !ITEM_IDS.includes(h.item as ItemId) || !integer(h.charges, 1, RACE_LIMITS.heldCharges) ||
-          !(h.ttl === -1 || finite(h.ttl, 0, 6)) || !finite(h.cooldown, 0, 1)) return null;
+          !(h.ttl === -1 || finite(h.ttl, 0, 6)) || !finite(h.cooldown, 0, 1) || !finite(h.roulette, 0, ITEM_ROULETTE_SECONDS)) return null;
         const max = (h.item as string).startsWith("triple-") ? 3 : h.item === "static" ? 2 : h.item === "rapid-boost" ? 20 : 1;
         if (h.charges > max || (h.ttl !== -1 && !["static", "rapid-boost"].includes(h.item as string))) return null;
+        if (h.roulette > 0 && (h.ttl !== -1 || h.cooldown !== 0 || h.charges !== max || value.options.mode === "time-trial")) return null;
       }
       if (!record(k.status) || !keys(k.status, STATUS_KEYS) || !record(k.statusIds) || !keys(k.statusIds, STATUS_KEYS)) return null;
       for (const status of STATUS_KEYS) {

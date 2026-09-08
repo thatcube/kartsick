@@ -27,6 +27,13 @@ advancing physics. Equal-tick snapshots with newer transport sequences remain
 valid for those retries. Compression leaves event batches, receipt acknowledgments
 and final-state/checkpoint contents unchanged.
 
+Protocol 4 carries simulation-state version 2. Held items include an authoritative
+roulette countdown; recovery includes the original pose and safe carry ceiling.
+Receiving or restoring a snapshot does not reroll inventory or restart recovery.
+The new `item-ready` event is a presentation cue, not permission to choose a
+different outcome. Persisted protocol-2/3 rooms retain seats but return to an
+unready lobby instead of restoring incompatible old simulation checkpoints.
+
 After checkpoint restoration, browsers use the room's shared server-scheduled
 resume time rather than each browser's local restoration time. In-game traffic
 diagnostics accumulate sampled data-channel counters across all peers and
@@ -44,7 +51,7 @@ npm run dev
 
 The existing Vite origin serves both the application and:
 
-- `POST /rooms` with JSON `{"version":3}` → `201 {version:3, code}`.
+- `POST /rooms` with JSON `{"version":4}` → `201 {version:4, code}`.
 - `GET /rooms/ABCDEFGH` upgraded to a WebSocket.
 - Invitations use `/?room=ABCDEFGH`; the eight-character code can also be entered
   directly. There is no account, password, matchmaking, or profile service.
@@ -64,7 +71,7 @@ persistence across object hibernation; neither adapter stores race state.
 ## Packages and actual endpoints
 
 - `packages/protocol`: legacy version-one single-driver parser plus separate
-  version-three room, complete-player-input, snapshot, checkpoint, event, and
+  version-four room, complete-player-input, snapshot, checkpoint, event, and
   bounded-fragment schemas. The legacy parser/tests remain compatible.
 - `apps/signaling/src/room.ts`: adapter-independent room state machine.
 - `apps/signaling/src/local.ts`: real Node HTTP/`ws` adapter and Vite integration.
@@ -297,7 +304,7 @@ No caller changes are required:
 - `broadcastSnapshot` still returns `{sequence, sent, dropped}` synchronously.
 - `commitCheckpoint` keeps its existing asynchronous publication/commit contract.
 - Inputs, receipt acknowledgments, resync requests and generic reliable `E`
-  events remain ordinary version-three JSON. Application `RaceEvent[]` batches
+  events remain ordinary version-four JSON. Application `RaceEvent[]` batches
   are neither rewritten nor implicitly compressed.
 - Compression, envelope preparation and fragmentation are cached once per
   selected codec for a broadcast, not repeated for every peer. The existing
@@ -324,7 +331,7 @@ Peers without compression support close unknown channel labels. That closes
 only this optional probe: the sender continues plain snapshots/checkpoints,
 without sending unknown capability packets to the game-message parser. A
 same-protocol authority that never opens a probe also remains usable.
-Protocol-version-2 clients cannot join a version-3 room. Unsupported/malformed/
+Protocol-version-2/3 clients cannot join a version-4 room. Unsupported/malformed/
 timed-out probes and optional-channel creation failures fall back quietly to
 plain traffic; they do not restart otherwise working game channels.
 

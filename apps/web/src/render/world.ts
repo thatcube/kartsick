@@ -5,7 +5,7 @@ import { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import {
   BARNS, GAP_END, GAP_START, HAY_BALES, ORCHARD, ROAD, ROAD_WIDTH, SHOULDER_WIDTH, WATER_LEVEL, WINDMILL,
-  bankHeight, bankWidth, hasRail, isGap, projectRoad, sampleRoad, surfaceHeight, terrainHeight,
+  bankHeight, bankWidth, butterbellHazards, hasRail, isGap, projectRoad, sampleRoad, surfaceHeight, terrainHeight,
 } from "@kartsick/content";
 import { Atelier } from "./geometry";
 import type { Triple } from "./geometry";
@@ -351,11 +351,43 @@ export function makeWorld(art: Atelier): StudyWorld {
     for (let rung = 0; rung < 5; rung++) art.box("sail rib", [0.7, 2.3 + rung * 1.1, -0.07], [1.6, 0.09, 0.06], "#c6aa79", blade);
   }
   art.batchModel(rotor, new Set());
+  const hayRollers = butterbellHazards(0).map((hazard, index) => {
+    const root = new TransformNode(hazard.id, scene);
+    const bale = art.cylinder("rolling harvest bale", [0, 0, 0], 2.2, 2.2, 1.9, "#eab54e", root);
+    bale.rotation.z = Math.PI / 2;
+    for (const side of [-1, 1]) {
+      const ring = art.cylinder("harvest ribbon", [side * .53, 0, 0], 2.23, 2.23, .15, "#6b9c8a", root);
+      ring.rotation.z = Math.PI / 2;
+      const cap = art.oval("bale end", [side * .965, 0, 0], [.05, 1.85, 1.85], "#f4d786", root, 1, 10);
+      cap.receiveShadows = true;
+      for (let n = 0; n < 3; n++) {
+        const end = art.cylinder("coiled hay", [side * .997, 0, 0], 1.4 - n * .4, 1.4 - n * .4, .022, n % 2 ? "#f4d786" : "#c68d40", root);
+        end.rotation.z = Math.PI / 2;
+      }
+    }
+    art.batchModel(root, new Set(), true);
+    const u = index ? .865 : .18;
+    roadsideSign(art, "ROLLING HARVEST", u - .027, index ? 1 : -1, 5.5);
+    return root;
+  });
+  for (let i = 0; i < 28; i++) {
+    const x = -105 + Math.sin(i * 2.3) * 34;
+    const z = -110 + i * 10;
+    tree(art, x, z, 1.1 + noise(i + 800) * .9, i);
+  }
   const scenery = art.finishStatic();
   const nonCastingColors = ["#fff6da", "#8eb698", "#a0bca0", "#62b6bb", "#b6dfce"];
   return {
     casters: [...scenery.filter(mesh => !nonCastingColors.some(color => mesh.material?.name.startsWith(color))),
-      ...rotor.getChildMeshes().filter((mesh): mesh is Mesh => mesh instanceof Mesh)],
-    animate(time) { rotor.rotation.z = time * 0.24; },
+      ...rotor.getChildMeshes().filter((mesh): mesh is Mesh => mesh instanceof Mesh),
+      ...hayRollers.flatMap(root => root.getChildMeshes().filter((mesh): mesh is Mesh => mesh instanceof Mesh))],
+    animate(time) {
+      rotor.rotation.z = time * 0.24;
+      butterbellHazards(time).forEach((hazard, index) => {
+        const root = hayRollers[index], p = sampleRoad(index ? .865 : .18);
+        root.position.set(hazard.x, hazard.y, hazard.z);
+        root.rotation.set(0, Math.atan2(p.dx, p.dz), Math.sin(time * Math.PI * 2 / 7 + index));
+      });
+    },
   };
 }

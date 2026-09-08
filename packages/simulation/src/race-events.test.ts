@@ -23,6 +23,7 @@ const examples: Record<RaceEvent["type"], RaceEvent> = {
   finish: { ...base, type: "finish", value: 110.625 },
   "race-finished": { ...base, type: "race-finished", kartId: "" },
   pickup: { ...base, type: "pickup", ...item },
+  "item-ready": { ...base, type: "item-ready", ...item },
   "item-used": { ...base, type: "item-used", ...item },
   spawn: { ...base, type: "spawn", ...item },
   expire: { ...base, type: "expire", ...item },

@@ -166,6 +166,12 @@
 .held-item [data-item-name] { font-size: .78em; text-align: center; line-height: 1.15; }
 .held-item [data-item-count] { position: absolute; right: .5em; top: 2.3em; font-size: 1.4em; color: var(--pit-gold); }
 .held-item[data-empty="true"] { background: #24345b80; border-style: dashed; opacity: .7; }
+.held-item[data-spinning="true"] { border-color: #f9d26a; background: #294557f2; overflow: hidden; }
+.held-item[data-spinning="true"] svg { filter: drop-shadow(0 3px 2px #0006); }
+.roulette-progress { position: absolute; bottom: 0; left: 0; height: 4px; width: 100%; background: #f9d26a; transform-origin: left; transform: scaleX(var(--roulette-progress, 0)); opacity: 0; }
+.held-item[data-spinning="true"] .roulette-progress { opacity: 1; }
+.held-item[data-settled="true"] { animation: item-settle .34s ease-out; }
+@keyframes item-settle { 0% { transform: scale(1.12); border-color: white; box-shadow: 0 0 24px #f9d26aaa; } 100% { transform: scale(1); box-shadow: none; } }
 .race-message { position: absolute; bottom: 12%; left: 24%; right: 24%; display: grid; justify-items: center; gap: .4em; text-align: center; font-size: clamp(10px, 1.9cqw, 17px); }
 .race-message > span { color: var(--pit-gold); font-size: 1.5em; font-weight: 700; }
 .kart-hud[data-charge="3"] .race-message { color: #b4f6ff; }

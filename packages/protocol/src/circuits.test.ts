@@ -302,14 +302,16 @@ describe("server-attested terminal rounds and circuit scheduling", () => {
 });
 
 describe("durable terminal checkpoints, authority departure and aborts", () => {
-  it("upgrades pre-attestation persisted rooms without inventing results or losing seats", async () => {
+  it.each([2, 3])("upgrades incompatible v%s persisted rooms without inventing results or losing seats", async version => {
     const t = setup(), host = await t.join();
     await t.start(host); await t.commit(host);
     const saved = t.engine.export();
-    Reflect.set(saved.room, "version", 2);
-    Reflect.deleteProperty(saved.room, "round");
-    Reflect.deleteProperty(saved.room, "series");
-    Reflect.deleteProperty(saved.room, "lastRound");
+    Reflect.set(saved.room, "version", version);
+    if (version === 2) {
+      Reflect.deleteProperty(saved.room, "round");
+      Reflect.deleteProperty(saved.room, "series");
+      Reflect.deleteProperty(saved.room, "lastRound");
+    }
     const restored = new RoomEngine("ABCDEFGH", t.now, saved);
     expect(restored.room).toMatchObject({ version: NETWORK_VERSION, phase: "lobby", round: null,
       series: null, lastRound: null, checkpoint: null, pendingCheckpoint: null });

@@ -1,9 +1,12 @@
 import {
-  angleDifference, checkpointSpan, clamp, combinedStats, getCourse, lerp, nearbyFlight, roadFeatures,
+  advanceRoad, angleDifference, checkpointSpan, clamp, combinedStats, getCourse, lerp, nearbyFlight, roadFeatures, wrap,
 } from "@kartsick/content";
 import type { CourseQuery, KartBuild, RoadProjection } from "@kartsick/content";
 
 export const STEP = 1 / 60;
+export const RESCUE_SECONDS = 1.8;
+export interface RescueOrigin { x: number; y: number; z: number; yaw: number }
+export interface RescuePath extends RescueOrigin { ceiling: number }
 export const GLIDE_DYNAMICS = Object.freeze({ gravity: 4.6, pitchAuthority: 3.1, response: 1.7 });
 export const TUNING = {
   topSpeed: 28, boostSpeed: 37, acceleration: 12, braking: 23,
@@ -72,6 +75,7 @@ export interface KartState {
   counterCooldown: number;
   boost: number;
   recovery: number;
+  rescue: RescuePath | null;
   previousRecover: boolean;
   previousSwap: boolean;
   driver: 0 | 1;
@@ -101,7 +105,7 @@ export function createKart(course = getCourse()): KartState {
     tick: 0, x: start.x, y: start.y + 0.42, z: start.z,
     yaw: Math.atan2(start.dx, start.dz), vx: 0, vz: 0, vy: 0, speed: 0,
     mode: "ground", driftDirection: 0, driftCharge: 0, counterArmed: true,
-    counterCooldown: 0, boost: 0, recovery: 0, previousRecover: false,
+    counterCooldown: 0, boost: 0, recovery: 0, rescue: null, previousRecover: false,
     previousSwap: false, driver: 0, swapTime: 0, nextCheckpoint: 1,
     lap: 1, lapStart: 0, elapsed: 0, lapTimes: [], finished: false,
     roadU: start.u, offRoad: false, wrongWay: false, recoveries: 0, impactCooldown: 0,
@@ -109,7 +113,7 @@ export function createKart(course = getCourse()): KartState {
 }
 
 export function copyKart(state: KartState): KartState {
-  return { ...state, lapTimes: [...state.lapTimes] };
+  return { ...state, rescue: state.rescue && { ...state.rescue }, lapTimes: [...state.lapTimes] };
 }
 
 function clearDrift(state: KartState): void {
@@ -119,11 +123,23 @@ function clearDrift(state: KartState): void {
 }
 
 export function recoverKart(state: KartState, course = getCourse()): void {
+  if (state.finished || state.recovery > 0) return;
   const { previous, span } = checkpointSpan(course, state.nextCheckpoint);
-  const checkpoint = course.sampleRoad(previous.u + Math.min(0.004, span * 0.25));
-  // A failed flight must restart on the approach, not on a checkpoint over water.
+  const offset = (u: number) => course.format === "sectors" ? u - previous.u : wrap(u - previous.u, 1);
+  const along = (u: number, metres: number) => advanceRoad(course, { ...course.sampleRoad(u), separation: 0, lateral: 0 }, metres);
+  const start = along(previous.u, 4);
+  const progress = offset(state.roadU);
+  const behind = along(state.roadU, -8);
+  const checkpoint = progress < span && offset(behind.u) >= offset(start.u) && offset(behind.u) < span
+    ? behind : course.sampleRoad(previous.u + Math.min(offset(start.u), span * .25));
+  // Restart failed flights on a usable run-up, measured in metres on every course.
   const flight = nearbyFlight(course, checkpoint.u);
-  const recoveryPoint = course.isGap(checkpoint.u) && flight ? course.sampleRoad(flight.start - 0.075) : checkpoint;
+  const recoveryPoint = course.isGap(checkpoint.u) && flight ? along(flight.start, -24) : checkpoint;
+  let ceiling = Math.max(state.y, recoveryPoint.y + .42) + 5;
+  for (let n = 1; n < 16; n++) {
+    ceiling = Math.max(ceiling, course.surfaceHeight(lerp(state.x, recoveryPoint.x, n / 16), lerp(state.z, recoveryPoint.z, n / 16)) + 5);
+  }
+  state.rescue = { x: state.x, y: state.y, z: state.z, yaw: angleDifference(state.yaw, 0), ceiling };
   state.x = recoveryPoint.x;
   state.z = recoveryPoint.z;
   state.y = recoveryPoint.y + 0.42;
@@ -131,13 +147,29 @@ export function recoverKart(state: KartState, course = getCourse()): void {
   state.vx = state.vz = state.vy = state.speed = 0;
   state.mode = "ground";
   state.boost = 0;
-  state.recovery = 0.65;
+  state.recovery = RESCUE_SECONDS;
   state.recoveries++;
   state.roadU = recoveryPoint.u;
   state.offRoad = false;
   state.wrongWay = false;
   state.impactCooldown = 0;
   clearDrift(state);
+}
+
+/** The same lift/carry/lower path can be reconstructed from any recovery snapshot. */
+export function rescuePose(state: KartState): RescueOrigin {
+  const from = state.rescue;
+  if (!from || state.recovery <= 0) return { x: state.x, y: state.y, z: state.z, yaw: state.yaw };
+  const t = clamp(1 - state.recovery / RESCUE_SECONDS, 0, 1);
+  const smooth = (n: number) => { const v = clamp(n, 0, 1); return v * v * (3 - 2 * v); };
+  const carry = smooth((t - .22) / .5);
+  const ceiling = from.ceiling;
+  const y = t < .22 ? lerp(from.y, ceiling, smooth(t / .22)) :
+    t < .72 ? ceiling : lerp(ceiling, state.y, smooth((t - .72) / .28));
+  return {
+    x: lerp(from.x, state.x, carry), y, z: lerp(from.z, state.z, carry),
+    yaw: from.yaw + angleDifference(state.yaw, from.yaw) * carry,
+  };
 }
 
 function impact(state: KartState, events: DrivingEvent[]): void {
@@ -270,7 +302,7 @@ export function stepKart(state: KartState, input: DriverInput, options: StepKart
   state.counterCooldown = Math.max(0, state.counterCooldown - STEP);
   state.impactCooldown = Math.max(0, state.impactCooldown - STEP);
 
-  if (input.recover && !state.previousRecover) {
+  if (input.recover && !state.previousRecover && state.recovery === 0) {
     recoverKart(state, course);
     events.push({ type: "recover" });
   }
@@ -283,6 +315,7 @@ export function stepKart(state: KartState, input: DriverInput, options: StepKart
   state.previousSwap = input.swap;
   if (state.recovery > 0) {
     state.recovery = Math.max(0, state.recovery - STEP);
+    if (state.recovery === 0) state.rescue = null;
     return events;
   }
 

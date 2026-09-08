@@ -13,6 +13,7 @@ import { DrivingFeedback } from "./feedback";
 import { ChaseCamera, updateKartPose } from "./driving-pose";
 import { makeItemVisual, makePickupBox } from "./items";
 import { makeKart } from "./kart";
+import { makeTowbell } from "./rescue";
 import type { KartModel, KartVisualEffects } from "./kart";
 import { applyStageQuality, createStage, loadStageCourse, makeCamera } from "./stage";
 
@@ -26,8 +27,8 @@ export interface RacerFrame {
   visible?: boolean;
 }
 export interface RenderEntry { id: string; build: KartBuild; ghost?: boolean }
-interface RenderKart { key: string; model: KartModel; contact: Mesh; feedback: DrivingFeedback | null; started: boolean }
-interface RenderEffect { key: string; root: TransformNode; warning: Mesh; pulse: boolean }
+interface RenderKart { key: string; model: KartModel; contact: Mesh; feedback: DrivingFeedback | null; started: boolean; rescue: ReturnType<typeof makeTowbell> | null }
+interface RenderEffect { key: string; root: TransformNode; visual: TransformNode; warning: Mesh; pulse: boolean }
 
 export class RaceScene {
   private readonly stage;
@@ -119,13 +120,15 @@ export class RaceScene {
       contact.rotation.x = Math.PI / 2;
       contact.material = this.contactMaterial;
       contact.isPickable = false;
-      this.karts.set(entry.id, { key, model, contact, feedback: entry.ghost ? null : new DrivingFeedback(this.scene), started: false });
+      this.karts.set(entry.id, { key, model, contact, feedback: entry.ghost ? null : new DrivingFeedback(this.scene),
+        rescue: entry.ghost ? null : makeTowbell(this.stage.art), started: false });
     }
   }
 
   private removeKart(kart: RenderKart): void {
     for (const mesh of kart.model.meshes) this.stage.shadows.removeShadowCaster(mesh);
     kart.feedback?.dispose();
+    kart.rescue?.root.dispose();
     kart.contact.dispose();
     kart.model.root.dispose();
   }
@@ -197,17 +200,22 @@ export class RaceScene {
         if (pickup.double) {
           const second = makePickupBox(this.stage.art);
           second.parent = root;
-          first.position.x = -0.46;
-          second.position.x = 0.46;
-          first.scaling.setAll(0.7);
-          second.scaling.setAll(0.7);
+          first.position.x = -0.83;
+          second.position.x = 0.83;
+          first.scaling.setAll(0.95);
+          second.scaling.setAll(0.95);
         }
         model = { root, double: pickup.double };
         this.pickups.set(pickup.id, model);
       }
-      model.root.position.set(pickup.x, pickup.y + (reducedMotion ? 0 : Math.sin(this.time * 2 + index) * 0.12), pickup.z);
+      const burst = pickup.cooldown > 4.72 ? (5 - pickup.cooldown) / .28 : 0;
+      const respawn = pickup.cooldown > 0 && pickup.cooldown < .3 ? 1 - pickup.cooldown / .3 : 1;
+      const scale = reducedMotion ? 1 : burst > 0 ? 1 + burst * .7 : respawn;
+      model.root.scaling.setAll(scale);
+      model.root.position.set(pickup.x, pickup.y + (reducedMotion ? 0 : Math.sin(this.time * 2 + index) * 0.18 + burst), pickup.z);
       model.root.rotation.y = reducedMotion ? 0.35 : this.time * 0.7 + index;
-      model.root.setEnabled(pickup.cooldown <= 0);
+      model.root.setEnabled(pickup.cooldown <= 0 || !reducedMotion && (burst > 0 || respawn < 1));
+      for (const mesh of model.root.getChildMeshes()) mesh.visibility = burst > 0 ? 1 - burst : 1;
     });
   }
 
@@ -221,18 +229,24 @@ export class RaceScene {
       if (!model) {
         const pulse = effect.kind === "blast" || effect.kind === "pulse" || effect.kind === "weather" || effect.kind === "theft";
         const root = new TransformNode(`effect ${effect.id}`, this.scene);
+        const visual = new TransformNode(`animated item ${effect.id}`, this.scene);
+        visual.parent = root;
         if (pulse) {
           const ring = MeshBuilder.CreateTorus(`impact ${effect.id}`, { diameter: 2, thickness: 0.12, tessellation: 32 }, this.scene);
-          ring.parent = root;
+          ring.parent = visual;
           ring.material = this.blastMaterial;
+          const echo = MeshBuilder.CreateTorus(`impact echo ${effect.id}`, { diameter: 1.45, thickness: .045, tessellation: 24 }, this.scene);
+          echo.parent = visual;
+          echo.position.y = .22;
+          echo.material = this.warningMaterial;
         } else {
           const item = makeItemVisual(this.stage.art, effect.item);
-          item.parent = root;
+          item.parent = visual;
         }
         const warning = MeshBuilder.CreateTorus(`warning ${effect.id}`, { diameter: 2, thickness: 0.055, tessellation: 32 }, this.scene);
         warning.parent = root;
         warning.material = this.warningMaterial;
-        model = { key, root, warning, pulse };
+        model = { key, root, visual, warning, pulse };
         this.effects.set(effect.id, model);
       }
       model.root.position.set(effect.x, effect.y, effect.z);
@@ -240,6 +254,13 @@ export class RaceScene {
       model.root.rotation.y = Math.hypot(effect.vx, effect.vz) > 0.1 ? Math.atan2(effect.vx, effect.vz) : Math.atan2(direction.dx, direction.dz);
       if (effect.kind === "dropped" && !reducedMotion) model.root.rotation.y = this.time;
       model.root.scaling.set(model.pulse ? effect.radius : 1, 1, model.pulse ? effect.radius : 1);
+      const arrival = reducedMotion ? 1 : Math.min(1, effect.age / .16);
+      const scale = model.pulse ? .25 + .75 * arrival : Math.sin(arrival * Math.PI / 2);
+      model.visual.scaling.setAll(scale);
+      model.visual.rotation.x = !reducedMotion && effect.kind === "projectile" && effect.item === "bounce" ? effect.age * 11 : 0;
+      model.visual.rotation.z = !reducedMotion && effect.kind === "bomb" ? Math.sin(effect.age * 8) * .18 : 0;
+      model.visual.position.y = !reducedMotion && effect.kind === "dropped" ? .12 + Math.sin(effect.age * 4) * .12 : 0;
+      for (const mesh of model.visual.getChildMeshes()) mesh.visibility = model.pulse ? Math.min(1, effect.ttl / .18) : 1;
       model.warning.scaling.set(model.pulse ? 1 : effect.radius, 1, model.pulse ? 1 : effect.radius);
       model.warning.position.y = course.surfaceHeight(effect.x, effect.z) + 0.055 - effect.y;
       model.warning.setEnabled(effect.arm > 0 || effect.kind === "bomb" || effect.kind === "barrier");
@@ -253,14 +274,20 @@ export class RaceScene {
     for (const frame of frames) {
       const kart = this.karts.get(frame.id);
       if (!kart) throw new Error(`Missing visual kart ${frame.id}.`);
-      if (frame.visible === false) { kart.model.root.setEnabled(false); kart.contact.setEnabled(false); continue; }
+      if (frame.visible === false) { kart.model.root.setEnabled(false); kart.contact.setEnabled(false); kart.rescue?.root.setEnabled(false); continue; }
       updateKartPose(kart.model, frame.previous, frame.state, frame.input, frame.alpha, bounded, moving, this.settings, course.surfaceHeight, kart.started, frame.effects);
       const position = kart.model.root.position;
       kart.contact.position.set(position.x, course.surfaceHeight(position.x, position.z) + 0.02, position.z);
       kart.contact.rotation.y = kart.model.root.rotation.y;
       kart.contact.scaling.set(1.15 * kart.model.root.scaling.x, 1.6 * kart.model.root.scaling.z, 1);
-      kart.contact.setEnabled(frame.state.mode === "ground" && !frame.effects.ghost);
-      kart.feedback?.update(frame.state, position, kart.model.root.rotation.y, moving && !frame.effects.ghost, this.settings.reducedMotion);
+      kart.contact.setEnabled(frame.state.mode === "ground" && frame.state.recovery === 0 && !frame.effects.ghost);
+      if (kart.rescue) {
+        kart.rescue.root.setEnabled(frame.state.recovery > 0);
+        kart.rescue.root.position.copyFrom(position);
+        kart.rescue.root.rotation.y = kart.model.root.rotation.y;
+        kart.rescue.rotor.rotation.y = this.settings.reducedMotion ? .45 : frame.state.tick * .7;
+      }
+      kart.feedback?.update(frame.state, position, kart.model.root.rotation.y, moving && frame.state.recovery === 0 && !frame.effects.ghost, this.settings.reducedMotion);
       kart.started = true;
     }
     for (const rig of this.rigs) {
