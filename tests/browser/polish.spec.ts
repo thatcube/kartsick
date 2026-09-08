@@ -34,6 +34,17 @@ test("random pickups visibly spin, settle and survive a controller-operated Towb
   await page.waitForFunction(() => window.__KARTSICK_RACE__!.read().race.phase === "racing");
   try {
     await page.evaluate(async url => { const pilot = await import(/* @vite-ignore */ url); pilot.startFullRacePilot(60_000); }, pilotUrl);
+    await page.waitForFunction(() => window.__KARTSICK_RACE__!.read().race.karts[0].state.roadU > .035);
+    await page.evaluate(async url => {
+      const pilot = await import(/* @vite-ignore */ url);
+      pilot.stopPilot();
+      window.__testPad!.buttons[6] = { value: 1, pressed: true, touched: true };
+    }, pilotUrl);
+    await page.waitForFunction(() => Math.abs(window.__KARTSICK_RACE__!.read().race.karts[0].state.speed) < 1);
+    await page.evaluate(() => { window.__testPad!.buttons[6] = { value: 0, pressed: false, touched: false }; });
+    expect(await page.evaluate(() => window.__KARTSICK_RACE__!.read().race.karts[0].held.every(item => item === null))).toBe(true);
+    await page.screenshot({ path: info.outputPath("delivery-case-approach.png") });
+    await page.evaluate(async url => { const pilot = await import(/* @vite-ignore */ url); pilot.startFullRacePilot(60_000); }, pilotUrl);
     const spinning = page.locator('.held-item[data-spinning="true"]');
     await expect(spinning.first()).toBeVisible({ timeout: 60_000 });
     await page.evaluate(async url => { const pilot = await import(/* @vite-ignore */ url); pilot.stopPilot(); }, pilotUrl);

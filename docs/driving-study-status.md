@@ -13,6 +13,11 @@ under reduced motion. The chosen result is reserved at collection and cannot be
 used during the spin; character swaps/passing and checkpoint restoration retain
 that exact inventory. Mystery items are not stealable until revealed. Fixed
 time-trial boosts and identifiable dropped items do not roll.
+Ground pickups are now 1.72-metre-wide brass-trimmed enamel delivery cases,
+with readable front/back reel stamps, carrying handles and warm indicator lamps.
+Paired cases remain distinct, and collection/respawn motion is separate from the
+authoritative reveal. The cases use two batched meshes each and original
+procedural geometry rather than imported art.
 
 Towbell, an original bell-shaped propeller tug, now visibly lifts, carries and
 lowers a stranded kart using a source/path stored in the simulation. Recovery

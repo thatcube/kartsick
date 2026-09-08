@@ -203,16 +203,96 @@ export function makeItemVisual(art: Atelier, id: ItemId): TransformNode {
   return root;
 }
 
-/** A pickup is visibly a delivery parcel, not a copy of a franchise question-mark cube. */
+/** Closed, flat-faced enamel with broad chamfers that catch the track's real lighting. */
+function parcelBlock(art: Atelier, root: TransformNode, name: string, position: Triple, size: Triple, color: string, corner = 0.08, bevel = 0.018) {
+  const [width, height, depth] = size.map(value => value / 2);
+  const edge = Math.min(bevel, depth * 0.45, width * 0.3, height * 0.3);
+  const cut = Math.min(corner, width * 0.6, height * 0.6);
+  const ring = (inset: number, z: number): Triple[] => {
+    const x = width - inset, y = height - inset, c = Math.max(0.002, cut - inset * 0.4);
+    return [[-x + c, -y, z], [x - c, -y, z], [x, -y + c, z], [x, y - c, z],
+      [x - c, y, z], [-x + c, y, z], [-x, y - c, z], [-x, -y + c, z]];
+  };
+  const rings = [ring(edge, depth), ring(0, depth - edge), ring(0, -depth + edge), ring(edge, -depth)];
+  const positions: number[] = [], indices: number[] = [];
+  const face = (points: Triple[]) => {
+    const start = positions.length / 3;
+    for (const point of points) positions.push(...point);
+    for (let i = 1; i < points.length - 1; i++) indices.push(start, start + i, start + i + 1);
+  };
+  for (let row = 0; row < rings.length - 1; row++) for (let side = 0; side < 8; side++) {
+    const next = (side + 1) % 8;
+    face([rings[row][side], rings[row][next], rings[row + 1][next], rings[row + 1][side]]);
+  }
+  face([...rings[0]].reverse());
+  face(rings[3]);
+  return art.place(art.mesh(name, positions, indices), position, art.material(color), root);
+}
+
+/**
+ * Original brass-trimmed delivery-reel case, 1.72 × 1.541 × 1.41 m (W/H/D).
+ * Origin is the case center, with the handle extending above the enamel body.
+ * +Z and -Z carry matching readable stamps, with side spindles for a full-turn silhouette.
+ * Animate bob/spin/pop/respawn on the root, not shared materials. `pickup:lamps` owns
+ * the one emissive batch (mesh visibility may pulse); `pickup:burst` and `pickup:handle`
+ * are geometry-free attachment anchors. Dispose recursively without shared materials.
+ */
 export function makePickupBox(art: Atelier): TransformNode {
   const root = node(art, "Belltumble item parcel");
-  soft(art, root, "rounded enamel pickup parcel", [0, 0, 0], [0.73, 0.68, 0.73], "#5bd1c4", 0.6);
-  for (const z of [-1, 1]) {
-    soft(art, root, "parcel cream cross strap", [0, 0, z * 0.37], [0.13, 0.61, 0.019], CREAM, 0.65);
-    soft(art, root, "parcel horizontal strap", [0, 0, z * 0.374], [0.63, 0.13, 0.019], CREAM, 0.65);
+  root.metadata = { kind: "pickup", visual: "delivery-reel", forward: "+Z", stampFaces: 2, reelWindows: 3 };
+  const enamel = "#287f83", lid = "#42a9a5", shadow = "#204b56", brass = "#cf9a4f", edge = "#f2cc83", paper = "#fff0cf";
+  const lamps = node(art, "pickup:lamps", root);
+  lamps.metadata = { kind: "pickup-highlight", animation: "mesh-visibility" };
+  node(art, "pickup:burst", root).metadata = { kind: "pickup-attachment" };
+  node(art, "pickup:handle", root, [0, 0.83, 0]).metadata = { kind: "pickup-attachment" };
+
+  parcelBlock(art, root, "faceted deep lagoon enamel case", [0, 0, 0], [1.64, 1.18, 1.12], enamel, 0.16, 0.07);
+  parcelBlock(art, root, "recessed case lid seam", [0, 0.39, 0], [1.64, 0.055, 1.12], shadow, 0.14);
+  parcelBlock(art, root, "lighter enamel domed lid", [0, 0.48, 0], [1.61, 0.21, 1.10], lid, 0.1, 0.038);
+  for (const side of [-1, 1]) {
+    parcelBlock(art, root, "brass parcel strap across lid", [side * 0.48, 0.587, 0], [0.14, 0.045, 1.02], brass, 0.025);
+    parcelBlock(art, root, "brass parcel strap under case", [side * 0.48, -0.583, 0], [0.14, 0.045, 1.02], brass, 0.025);
+    for (const end of [-1, 1]) for (const top of [-1, 1]) {
+      parcelBlock(art, root, "chamfered brass corner shoe", [side * 0.72, top * 0.48, end * 0.49], [0.26, 0.25, 0.22], brass, 0.075, 0.03);
+      art.oval("corner shoe ivory rivet", [side * 0.72, top * 0.48, end * 0.607], [0.055, 0.055, 0.021], edge, root, 1, 6);
+    }
+    const hub = art.cylinder("brass delivery reel spindle", [side * 0.809, 0.015, 0], 0.4, 0.4, 0.054, brass, root);
+    hub.rotation.z = Math.PI / 2;
+    const inset = art.cylinder("reel spindle dark inset", [side * 0.839, 0.015, 0], 0.27, 0.27, 0.012, shadow, root);
+    inset.rotation.z = Math.PI / 2;
+    art.oval("side spindle porcelain key", [side * 0.849, 0.015, 0], [0.022, 0.16, 0.065], paper, root, 0.55, 6);
   }
-  torus(art, root, "parcel carrying loop", [0, 0.4, 0], 0.27, 0.04, GOLD).rotation.x = Math.PI / 2;
-  glow(art, root, "parcel stamped seal", [0, 0, 0.397], [0.2, 0.2, 0.029], GOLD);
+
+  for (const side of [-1, 1]) {
+    const z = (depth: number) => side * depth;
+    parcelBlock(art, root, "brass three-reel face bezel", [0, 0, z(0.567)], [1.43, 0.98, 0.065], brass, 0.12);
+    parcelBlock(art, root, "ink recessed reel bed", [0, 0, z(0.607)], [1.31, 0.86, 0.045], shadow, 0.085);
+    for (const column of [-1, 0, 1]) {
+      const x = column * 0.435;
+      parcelBlock(art, root, "porcelain delivery reel ticket", [x, 0.07, z(0.638)], [column === 0 ? 0.49 : 0.28, 0.61, 0.031], paper, 0.038, 0.008);
+      for (const y of [-0.185, 0.325]) {
+        art.box("ticket edge impression", [x, y, z(0.657)], [column === 0 ? 0.33 : 0.15, 0.018, 0.01], brass, root);
+      }
+      if (column !== 0) {
+        soft(art, root, "bold reel pip", [x, 0.07, z(0.664)], [0.13, 0.13, 0.028], enamel);
+      }
+      art.oval("amber indicator socket", [column * 0.31, -0.329, z(0.633)], [0.17, 0.10, 0.029], brass, root, 0.5, 6);
+      const lamp = art.oval("small warm delivery-ready lamp", [column * 0.31, -0.329, z(0.651)], [0.098, 0.042, 0.013], "#ffd793", lamps, 1, 6);
+      lamp.material = art.material("#ffd793", true);
+    }
+    parcelBlock(art, root, "embossed envelope stamp", [0, 0.095, z(0.665)], [0.35, 0.245, 0.025], enamel, 0.027, 0.005);
+    art.tube("clear folded envelope flap", [[-0.151, 0.186, z(0.686)], [0, 0.065, z(0.688)], [0.151, 0.186, z(0.686)]], 0.017, paper, root);
+    soft(art, root, "copper delivery wax seal", [0, -0.104, z(0.672)], [0.105, 0.105, 0.027], ORANGE);
+    art.box("wax seal stamped dash", [0, -0.104, z(0.689)], [0.045, 0.016, 0.009], paper, root);
+    art.box("bezel upper highlight", [0, 0.457, z(0.606)], [0.89, 0.019, 0.014], edge, root);
+  }
+
+  for (const side of [-1, 1]) {
+    parcelBlock(art, root, "handle brass mounting foot", [side * 0.265, 0.606, 0], [0.21, 0.085, 0.22], brass, 0.03);
+  }
+  art.tube("raised brass courier handle", [[-0.265, 0.61, 0], [-0.265, 0.8, 0], [-0.18, 0.885, 0], [0.18, 0.885, 0], [0.265, 0.8, 0], [0.265, 0.61, 0]], 0.045, brass, root);
+  parcelBlock(art, root, "stitched ink handle grip", [0, 0.885, 0], [0.35, 0.10, 0.12], shadow, 0.035);
+  art.box("handle grip light stitch", [0, 0.904, 0.063], [0.22, 0.012, 0.009], paper, root);
   art.batchModel(root, new Set(), true);
   return root;
 }
