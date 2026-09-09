@@ -12,6 +12,7 @@ import {
 } from "@kartsick/content";
 import { Atelier } from "./geometry";
 import { makeWorld } from "./world";
+import { makeCourseWorld } from "./course-worlds";
 import type { StudyWorld } from "./world";
 import { butterbellDecorationClearance } from "./butterbell-art";
 import { butterbellFieldColor, butterbellTexturePixels, BUTTERBELL_TEXTURE_SIZE } from "./butterbell-materials";
@@ -31,7 +32,7 @@ describe("Butterbell authored countryside", () => {
     }),
   } as unknown as ReturnType<NullEngine["createCanvas"]>));
   let world: StudyWorld;
-  beforeAll(() => { world = makeWorld(art); }, 20000);
+  beforeAll(() => { world = makeCourseWorld(art, "butterbell"); }, 20000);
   afterAll(() => {
     canvas.mockRestore(); cylinders.mockRestore(); boxes.mockRestore(); meshCalls.mockRestore();
     scene.dispose(); engine.dispose();
@@ -78,6 +79,22 @@ describe("Butterbell authored countryside", () => {
     }
     const silos = cylinders.mock.calls.filter(([name]) => name === "silo cream body");
     expect(silos.map(c => c.slice(2, 5))).toEqual([[5, 5.4, 10], [5, 5.4, 10]]);
+  });
+
+  it("has upward-facing rolling terrain outside, not through, the physical course", () => {
+    const hills = scene.getMeshByName("butterbell rolling countryside")!;
+    const positions = hills.getVerticesData(VertexBuffer.PositionKind)!;
+    const normals = hills.getVerticesData(VertexBuffer.NormalKind)!;
+    const heights = new Set<number>();
+    for (let i = 0; i < positions.length; i += 3) {
+      const x = positions[i], y = positions[i + 1], z = positions[i + 2];
+      expect(Math.abs(x) >= 239.999 || Math.abs(z) >= 249.999).toBe(true);
+      expect(normals[i + 1]).toBeGreaterThan(0);
+      if (i < 161 * 3) expect(y).toBeCloseTo(terrainHeight(x, z), 4);
+      heights.add(Math.round(y));
+    }
+    expect(heights.size).toBeGreaterThan(65);
+    expect(world.environment!.sunIntensity + world.environment!.fillIntensity).toBeLessThanOrEqual(1);
   });
 
   it("does not widen, elevate or bridge the physical road and samples the exact bank equation", () => {

@@ -10,10 +10,7 @@ import { makeTiltglassWorld } from "./worlds/tiltglass";
 import { makeCopperwhistleWorld } from "./worlds/copperwhistle";
 
 export function makeCourseWorld(art: Atelier, id: CourseId): CourseWorld {
-  if (id === "butterbell") {
-    const world = makeWorld(art);
-    return { casters: world.casters, animate: (time, reducedMotion) => world.animate(reducedMotion ? 0 : time) };
-  }
+  if (id === "butterbell") return makeWorld(art);
   if (id === "afterglow") return makeAfterglowWorld(art, getCourse(id));
   if (id === "escaluna") return makeEscalunaWorld(art, getCourse(id));
   if (id === "lastlight") return makeLastlightWorld(art, getCourse(id));

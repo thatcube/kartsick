@@ -5,7 +5,7 @@ import { makeKart } from "./kart";
 import { makeTowbell } from "./rescue";
 import { DrivingFeedback } from "./feedback";
 import { ChaseCamera, updateKartPose } from "./driving-pose";
-import { applyStageQuality, createStage } from "./stage";
+import { applyStageQuality, createStage, focusSun } from "./stage";
 import { makeContactShadow, makeContactShadowMaterial, updateContactShadow } from "./contact-shadow";
 
 export class StudyScene {
@@ -60,7 +60,7 @@ export class StudyScene {
     this.stage.world.animate(menu ? this.time : state.tick / 60, settings.reducedMotion);
     this.feedback.update(state, position, this.kart.root.rotation.y, moving && state.recovery === 0, settings.reducedMotion);
     this.chase.update(position, this.kart.root.rotation.y, state, bounded, menu, this.time, settings);
-    this.stage.light.position.set(position.x + 47, position.y + 83, position.z - 30);
+    focusSun(this.stage, position);
     this.scene.render();
   }
 

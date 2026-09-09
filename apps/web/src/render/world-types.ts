@@ -6,6 +6,7 @@ export interface CourseWorld {
   animate(time: number, reducedMotion?: boolean): void;
   environment?: {
     sky: string;
+    fog?: string;
     skyStyle?: "day" | "dusk" | "indoor";
     fogStart: number;
     fogEnd: number;

@@ -194,25 +194,27 @@ function fieldDetails(art: ButterbellArt, materials: ButterbellMaterials): void 
   }
 }
 
-function horizon(art: Atelier): void {
-  for (let layer = 0; layer < 2; layer++) {
-    const positions: number[] = [], indices: number[] = [], colors: number[] = [];
-    const color = Color3.FromHexString(layer ? "#8dac84" : "#658965");
-    for (let row = 0; row < 3; row++) for (let i = 0; i <= 144; i++) {
-      const angle = i / 144 * Math.PI * 2;
-      const radius = 365 + layer * 125 + row * 60;
-      const peak = 29 + layer * 18 + Math.sin(angle * 5 + layer) * 11 + Math.cos(angle * 9) * 5;
-      positions.push(Math.cos(angle) * radius, row === 1 ? peak : -9, Math.sin(angle) * radius);
-      const tint = row === 1 ? 1.08 : .85;
-      colors.push(color.r * tint, color.g * tint, color.b * tint, 1);
-      if (row < 2 && i < 144) {
-        const a = row * 145 + i;
-        indices.push(a, a + 145, a + 1, a + 1, a + 145, a + 146);
-      }
+function horizon(art: Atelier, materials: ButterbellMaterials): void {
+  const positions: number[] = [], indices: number[] = [], colors: number[] = [], uv: number[] = [];
+  const around = 160, rows = 28;
+  for (let row = 0; row <= rows; row++) for (let i = 0; i <= around; i++) {
+    const angle = i / around * Math.PI * 2;
+    const edge = 1 / Math.max(Math.abs(Math.cos(angle)), Math.abs(Math.sin(angle)));
+    const outward = row * 23;
+    const x = Math.cos(angle) * edge * (240 + outward), z = Math.sin(angle) * edge * (250 + outward);
+    const envelope = Math.sin(Math.min(1, outward / 230) * Math.PI / 2) ** 2;
+    const rolling = 30 + 19 * Math.sin(x * .012 + Math.sin(z * .009))
+      + 16 * Math.cos(z * .015 - Math.sin(x * .007)) + 9 * Math.sin((x + z) * .026);
+    positions.push(x, terrainHeight(x, z) + envelope * rolling, z);
+    const field = .5 + .5 * Math.sin(x * .025 + Math.sin(z * .018) * 2.4);
+    colors.push(.5 + field * .1, .66 + field * .09, .33 + field * .05, 1);
+    uv.push(x / 9, z / 9);
+    if (row < rows && i < around) {
+      const a = row * (around + 1) + i, next = a + around + 1;
+      indices.push(a, next, a + 1, a + 1, next, next + 1);
     }
-    const mesh = art.mesh(`butterbell distant valley ${layer}`, positions, indices, colors);
-    mesh.material = art.material("#ffffff");
   }
+  surfaceMesh(art, "butterbell rolling countryside", positions, indices, materials.pasture, colors, uv);
 }
 
 function pond(art: Atelier, scenery: ButterbellArt): void {
@@ -336,7 +338,7 @@ export function makeWorld(art: Atelier): StudyWorld {
   for (const bale of HAY_BALES) butterbellHay(scenery, materials, bale.x, bale.z);
   const rotor = butterbellWindmill(scenery);
   pond(art, scenery);
-  horizon(art);
+  horizon(art, materials);
   raceFestival(scenery);
   const rollers = HARVEST_POINTS.map((_, index) => {
     const root = new TransformNode(`hay-roller-${index}`, art.scene);
@@ -361,8 +363,8 @@ export function makeWorld(art: Atelier): StudyWorld {
   art.scene.metadata = { ...art.scene.metadata, butterbellFurniture: scenery.furniture };
   return {
     environment: {
-      sky: "#69bed9", skyStyle: "day", fogStart: 240, fogEnd: 680, sun: "#fff0ce", sunIntensity: 1.15,
-      fill: "#d5eaff", fillIntensity: .78, ground: "#566a3e",
+      sky: "#258bd7", skyStyle: "day", fog: "#b7ced5", fogStart: 240, fogEnd: 1000, sun: "#fff1d7", sunIntensity: .5,
+      fill: "#e1ebff", fillIntensity: .5, ground: "#899382",
     },
     casters: [...roadCasters, ...staticCasters, ...meshes(rotor), ...rollers.flatMap(meshes)],
     animate(time, reducedMotion = false) {

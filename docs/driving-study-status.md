@@ -7,6 +7,38 @@ single-kart Butterbell study remains available at `/?study` for controller compa
 The main entry runs the expanded local and direct-online development build.
 This is not the complete Kartsick release or the final production art/audio package.
 
+## Lighting and grounding correction
+
+The first graphics checkpoint was not visually accepted: the scenery still read
+as flat and sparse, with weak grounding and a cutout horizon. This correction
+was compared at matching driving-camera positions in both Balanced (the default)
+and High, not only in a close-up model viewer.
+
+Butterbell's course adapter was dropping its authored environment, so the main
+game and study used fallback lighting. Returning the complete world now retains
+its sky, fog and light balance. The same adapter incorrectly stopped all world
+animation under reduced motion; harvest rollers now receive race time while the
+decorative windmill alone respects reduced motion. The world regressions now
+exercise this actual course-loading entry point rather than only the builder.
+
+The sun/fill budget no longer saturates the StandardMaterial diffuse-light
+clamp, preserving shading on textured and vertex-colored surfaces. A brighter
+pasture palette, controlled exposure and blue sky fill keep shadowed characters
+readable. Fog has its own color instead of turning distant scenery saturated
+sky blue. The horizon is continuous rolling geometry outside the playable
+bounds, joined to the existing ground rather than two flat ridge strips.
+
+Kart contact shadows previously coincided with the rendered road height.
+They now clear pavement and follow the local slope, including mirrored and
+overlapping-deck routes. Directional shadows use a corrected bias to avoid road
+striping, and their focus follows the same mirrored sun direction as the sky
+and reflections. These changes preserve driving and collision geometry.
+
+The visual gap is still real: this is a lighting/grounding correction, not
+reference-quality environmental production. The broad fields still need
+stronger composition and richer original assets; lighting alone cannot supply
+that. Software-rendered browser captures are not a native-GPU performance claim.
+
 ## First graphics-overhaul checkpoint
 
 Butterbell now has an authored dairy-festival environment: restrained aggregate
@@ -30,8 +62,10 @@ through finish-aware materials and batching. Original sky reflections, a cloud
 atmosphere, HDR tone mapping, quality-scaled shadows, restrained high-quality
 bloom and soft contact shadows provide a consistent lighting baseline. This
 uses Babylon StandardMaterial finishes, not a claim of a complete PBR pipeline.
-Day, dusk and indoor skies preserve each world's setting; mirror mode keeps
-the sun, reflections and readable lettering consistent.
+Day, dusk and indoor profiles are available for each world's setting; the
+Butterbell environment forwarding defect described above was found and corrected
+in the subsequent lighting pass. Mirror mode keeps the sun, reflections and
+readable lettering consistent.
 
 Repeatable high-quality composition captures put the default kart at about
 18.3% of viewport width and 34.9% of height. Those captures supply poses for

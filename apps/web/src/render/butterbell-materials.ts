@@ -34,7 +34,7 @@ export function butterbellTexturePixels(kind: ButterbellTexture, size = BUTTERBE
     } else if (kind === "pasture") {
       const tuft = Math.sin(u * Math.PI * 12 + Math.sin(v * Math.PI * 6)) * 4;
       const fiber = n > .78 ? 10 : grain * 5;
-      r = 186 + tuft + fiber; g = 201 + tuft + fiber; b = 161 + tuft + fiber;
+      r = 217 + tuft + fiber; g = 225 + tuft + fiber; b = 195 + tuft + fiber;
     } else if (kind === "verge") {
       const grit = grain * 12 + (n > .95 ? 15 : 0);
       r = 165 + grit; g = 148 + grit; b = 107 + grit;
@@ -88,8 +88,8 @@ export function butterbellFieldColor(x: number, z: number): readonly [number, nu
   const fallow = Math.exp(-(((x - 86 + warp) / 45) ** 4 + ((z - 151) / 25) ** 4));
   const meadow = .5 + .5 * Math.sin(x * .024 + Math.sin(z * .032) * 1.3);
   return [
-    (.38 + meadow * .045) * (1 - barley * .9) + barley * .9 + fallow * .05,
-    (.57 + meadow * .035) * (1 - barley * .9) + barley * .72,
-    (.25 + meadow * .025) * (1 - barley * .85) + barley * .3,
+    (.5 + meadow * .045) * (1 - barley * .9) + barley * .9 + fallow * .05,
+    (.68 + meadow * .035) * (1 - barley * .9) + barley * .72,
+    (.35 + meadow * .025) * (1 - barley * .85) + barley * .3,
   ];
 }

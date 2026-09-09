@@ -16,9 +16,9 @@ import type { Settings } from "../storage";
 import { Atelier } from "./geometry";
 import { makeCourseWorld } from "./course-worlds";
 import type { CourseWorld } from "./world-types";
-import { makeAtmosphere } from "./atmosphere";
+import { makeAtmosphere, SUNLIGHT_DIRECTION } from "./atmosphere";
 
-const MORNING = {
+const MORNING: NonNullable<CourseWorld["environment"]> = {
   sky: "#249cd9", fogStart: 240, fogEnd: 700, sun: "#fff1ce", sunIntensity: 1.15,
   fill: "#d4edff", fillIntensity: 0.8, ground: "#4d6843",
 };
@@ -67,7 +67,7 @@ export function createStage(canvas: HTMLCanvasElement, settings: Settings) {
     fill.intensity = 0.65;
     fill.diffuse = Color3.FromHexString("#e4f2f4");
     fill.groundColor = Color3.FromHexString("#839074");
-    const light = new DirectionalLight("late morning sun", new Vector3(-0.55, -1, 0.35), scene);
+    const light = new DirectionalLight("afternoon sun", SUNLIGHT_DIRECTION.negate(), scene);
     light.position.set(50, 90, -80);
     light.diffuse = Color3.FromHexString("#f9eacd");
     light.intensity = 0.83;
@@ -81,17 +81,17 @@ export function createStage(canvas: HTMLCanvasElement, settings: Settings) {
     const shadows = new ShadowGenerator(1024, light);
     shadows.usePercentageCloserFiltering = true;
     shadows.filteringQuality = ShadowGenerator.QUALITY_MEDIUM;
-    shadows.bias = 0.0004;
-    shadows.normalBias = 0.025;
-    shadows.darkness = 0.22;
+    shadows.bias = 0.002;
+    shadows.normalBias = 0.05;
+    shadows.darkness = 0.18;
     for (const mesh of bundle.world.casters) shadows.addShadowCaster(mesh);
     const pipeline = new DefaultRenderingPipeline("clear afternoon", true, scene, [camera]);
     pipeline.fxaaEnabled = true;
     pipeline.imageProcessingEnabled = true;
     scene.imageProcessingConfiguration.toneMappingEnabled = true;
     scene.imageProcessingConfiguration.toneMappingType = ImageProcessingConfiguration.TONEMAPPING_ACES;
-    scene.imageProcessingConfiguration.exposure = 1.12;
-    scene.imageProcessingConfiguration.contrast = 1.1;
+    scene.imageProcessingConfiguration.exposure = 1.45;
+    scene.imageProcessingConfiguration.contrast = 1.05;
     pipeline.bloomThreshold = 1;
     pipeline.bloomWeight = .085;
     pipeline.bloomKernel = 32;
@@ -114,15 +114,23 @@ export type RenderStage = ReturnType<typeof createStage>;
 function applyEnvironment(stage: RenderStage, world: CourseWorld): void {
   const environment = world.environment ?? MORNING;
   stage.scene.clearColor = Color4.FromHexString(`${environment.sky}ff`);
-  stage.scene.fogColor = Color3.FromHexString(environment.sky);
+  stage.scene.fogColor = Color3.FromHexString(environment.fog ?? environment.sky);
   stage.scene.fogStart = environment.fogStart;
   stage.scene.fogEnd = environment.fogEnd;
   stage.light.diffuse = Color3.FromHexString(environment.sun);
-  stage.light.intensity = environment.sunIntensity;
+  // StandardMaterial clamps diffuse light before applying textures/vertex colors.
+  // Keep the combined light budget below that clamp so batched surfaces retain shape.
+  const strength = 1 / Math.max(1, environment.sunIntensity + environment.fillIntensity);
+  stage.light.intensity = environment.sunIntensity * strength;
   stage.fill.diffuse = Color3.FromHexString(environment.fill);
-  stage.fill.intensity = environment.fillIntensity;
+  stage.fill.intensity = environment.fillIntensity * strength;
   stage.fill.groundColor = Color3.FromHexString(environment.ground);
   stage.atmosphere.apply(environment);
+}
+
+export function focusSun(stage: Pick<RenderStage, "light">, position: { x: number; y: number; z: number }): void {
+  const direction = stage.light.direction;
+  stage.light.position.set(position.x - direction.x * 110, position.y - direction.y * 110, position.z - direction.z * 110);
 }
 
 export function loadStageCourse(stage: RenderStage, id: CourseId): boolean {

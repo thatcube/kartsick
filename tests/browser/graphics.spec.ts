@@ -23,7 +23,7 @@ type GraphicsModules = [
   typeof import("../../apps/web/src/render/contact-shadow"),
 ];
 
-test("Butterbell graphics uses repeatable driving-view compositions", async ({ page }, info) => {
+for (const quality of ["balanced", "high"] as const) test(`Butterbell ${quality} graphics uses repeatable driving-view compositions`, async ({ page }, info) => {
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 1600, height: 900 });
   await page.goto("/__network-test");
@@ -36,8 +36,8 @@ test("Butterbell graphics uses repeatable driving-view compositions", async ({ p
     page.on("pageerror", error => recordError(error.message));
     page.on("console", message => { if (message.type() === "error") recordError(message.text()); });
   });
-  const capture = page.evaluate(async root => {
-    const [{ createStage }, { makeKart }, { ChaseCamera, updateKartPose }, content, simulation, { DEFAULT_SETTINGS },
+  const capture = page.evaluate(async ({ root, quality }) => {
+    const [{ createStage, focusSun }, { makeKart }, { ChaseCamera, updateKartPose }, content, simulation, { DEFAULT_SETTINGS },
       { measureKartComposition }, { makeContactShadow, makeContactShadowMaterial, updateContactShadow }]: GraphicsModules = await Promise.all([
       import(root + "apps/web/src/render/stage.ts"),
       import(root + "apps/web/src/render/kart.ts"),
@@ -52,8 +52,12 @@ test("Butterbell graphics uses repeatable driving-view compositions", async ({ p
     const canvas = document.createElement("canvas");
     canvas.style.cssText = "width:100vw;height:100vh;display:block";
     document.body.append(canvas);
-    const settings: typeof DEFAULT_SETTINGS = { ...DEFAULT_SETTINGS, quality: "high", reducedMotion: true, master: 0 };
+    const settings: typeof DEFAULT_SETTINGS = { ...DEFAULT_SETTINGS, quality, reducedMotion: true, master: 0 };
     const stage = createStage(canvas, settings);
+    if (!stage.world.environment?.fog ||
+      stage.scene.fogColor.toHexString().toLowerCase() !== stage.world.environment.fog.toLowerCase()) {
+      throw new Error("Butterbell must retain its authored environment through the game's course loader.");
+    }
     const course = content.getCourse("butterbell");
     const chase = new ChaseCamera(stage.camera);
     stage.scene.activeCamera = stage.camera;
@@ -92,7 +96,7 @@ test("Butterbell graphics uses repeatable driving-view compositions", async ({ p
         target.y += .85;
         stage.camera.setTarget(target);
       }
-      stage.light.position.set(states[0].x + 47, states[0].y + 83, states[0].z - 30);
+      focusSun(stage, states[0]);
       stage.world.animate(0, true);
       stage.scene.render();
       return measureKartComposition(models[0].meshes, stage.camera, stage.engine.getRenderWidth(), stage.engine.getRenderHeight());
@@ -104,9 +108,11 @@ test("Butterbell graphics uses repeatable driving-view compositions", async ({ p
     render(.018);
     await stage.scene.whenReadyAsync();
     render(.018);
-    return { ...bench.count(), courseVersion: course.version, renderer: stage.engine.getGlInfo(),
+    return { ...bench.count(), quality, courseVersion: course.version, renderer: stage.engine.getGlInfo(),
+      lighting: { fog: stage.scene.fogColor.asArray(), sun: stage.light.intensity, fill: stage.fill.intensity,
+        direction: stage.light.direction.asArray(), exposure: stage.scene.imageProcessingConfiguration.exposure },
       composition: render(.018), note: "Fixed renderer-only compositions, not a driven race or a performance certification." };
-  }, source);
+  }, { root: source, quality });
   try {
     const evidence = await Promise.race([capture, failure]);
     const compositions = [];

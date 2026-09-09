@@ -10,16 +10,16 @@ import type { CourseWorld } from "./world-types";
 
 type Environment = NonNullable<CourseWorld["environment"]>;
 const SIZE = 32;
-const sunDirection = new Vector3(.55, 1, -.35).normalize();
+export const SUNLIGHT_DIRECTION = new Vector3(.8, 1, -.45).normalize();
 const profiles = {
-  day: { horizonBlend: .5, cloudStrength: 1, sunStrength: 1 },
+  day: { horizonBlend: .32, cloudStrength: 1, sunStrength: 1 },
   dusk: { horizonBlend: .28, cloudStrength: .65, sunStrength: .4 },
   indoor: { horizonBlend: .08, cloudStrength: 0, sunStrength: 0 },
 };
 
 export function reflectionFaces(sky: Color3, ground: Color3, style: Environment["skyStyle"] = "day", mirror = false): Uint8Array[] {
   const profile = profiles[style];
-  const sunlight = sunDirection.multiplyByFloats(mirror ? -1 : 1, 1, 1);
+  const sunlight = SUNLIGHT_DIRECTION.multiplyByFloats(mirror ? -1 : 1, 1, 1);
   const horizon = Color3.Lerp(sky, Color3.White(), profile.horizonBlend);
   return Array.from({ length: 6 }, (_, face) => {
     const pixels = new Uint8Array(SIZE * SIZE * 4);
@@ -73,14 +73,15 @@ float clouds(vec2 p) {
 void main() {
   vec3 ray = normalize(direction);
   float height = max(0.0,ray.y);
-  vec3 color = mix(horizon,zenith,pow(height,.18));
+  vec3 color = mix(horizon,zenith,pow(height,.42));
   float glow = pow(max(0.0,dot(ray,sunDirection)),24.0);
   color += sunlight * glow * .16 * sunStrength;
   if (ray.y > .015 && cloudStrength > 0.0) {
     vec2 p = ray.xz / (ray.y + .22) * 2.3;
     float density = clouds(p);
-    float cover = smoothstep(.53,.61,density) * smoothstep(.015,.14,ray.y);
-    vec3 cloud = mix(horizon*.88,mix(vec3(1.0),sunlight,.25)*1.3,smoothstep(.49,.65,density));
+    float cover = smoothstep(.55,.63,density) * smoothstep(.015,.14,ray.y);
+    float lit = clamp(.62 + (density-clouds(p+sunDirection.xz*.3))*3.8,0.0,1.0);
+    vec3 cloud = mix(horizon*.72,mix(vec3(1.0),sunlight,.15)*1.15,lit);
     color = mix(color,cloud,cover*cloudStrength);
   }
   color += sunlight * smoothstep(.9985,.9995,dot(ray,sunDirection)) * 1.4 * sunStrength;
@@ -113,7 +114,7 @@ export function makeAtmosphere(scene: Scene, environment: Environment) {
     material.setColor3("zenith", sky.scale(.9).toLinearSpace());
     material.setColor3("horizon", Color3.Lerp(sky, Color3.White(), profile.horizonBlend).toLinearSpace());
     material.setColor3("sunlight", Color3.FromHexString(next.sun).toLinearSpace());
-    material.setVector3("sunDirection", sunDirection.multiplyByFloats(mirror ? -1 : 1, 1, 1));
+    material.setVector3("sunDirection", SUNLIGHT_DIRECTION.multiplyByFloats(mirror ? -1 : 1, 1, 1));
     material.setFloat("cloudStrength", profile.cloudStrength);
     material.setFloat("sunStrength", profile.sunStrength);
     reflection.update(reflectionFaces(sky, Color3.FromHexString(next.ground), next.skyStyle, mirror),

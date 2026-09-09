@@ -3,6 +3,7 @@ import type { Page } from "@playwright/test";
 import { COURSES, type CourseId } from "@kartsick/content";
 import { freshGame, GAME_STORAGE_KEY } from "../../apps/web/src/game-storage";
 import type { RaceRuntime } from "../../apps/web/src/race-runtime";
+import type { Quality } from "../../apps/web/src/storage";
 
 declare global {
   interface Window {
@@ -12,9 +13,9 @@ declare global {
 
 const pilotUrl = "/@fs" + new URL("./pilot.ts", import.meta.url).pathname;
 
-async function openTrial(page: Page): Promise<void> {
+async function openTrial(page: Page, quality: Quality = "low"): Promise<void> {
   const save = freshGame("Course driver");
-  save.settings.quality = "low";
+  save.settings.quality = quality;
   save.settings.reducedMotion = true;
   await page.addInitScript(({ key, save }) => {
     localStorage.setItem(key, JSON.stringify(save));
@@ -43,7 +44,7 @@ test("each authored world drives normally and mirrored without accumulating cour
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
   page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
-  await openTrial(page);
+  await openTrial(page, "balanced");
   const counts: { materials: number; textures: number; vertices: number }[] = [];
   for (const mirror of [false, true]) {
     for (const course of [...COURSES.filter(course => course.available), COURSES[0]]) {

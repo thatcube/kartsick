@@ -15,7 +15,7 @@ import { makeItemVisual, makePickupBox } from "./items";
 import { makeKart } from "./kart";
 import { makeTowbell } from "./rescue";
 import type { KartModel, KartVisualEffects } from "./kart";
-import { applyStageQuality, createStage, loadStageCourse, makeCamera } from "./stage";
+import { applyStageQuality, createStage, focusSun, loadStageCourse, makeCamera } from "./stage";
 import { makeContactShadow, makeContactShadowMaterial, updateContactShadow } from "./contact-shadow";
 
 export interface RacerFrame {
@@ -293,7 +293,7 @@ export class RaceScene {
     const focus = this.rigs[0] && this.karts.get(this.rigs[0].id);
     if (focus) {
       const position = focus.model.root.position;
-      this.stage.light.position.set(position.x + (course.mirror ? -47 : 47), position.y + 83, position.z - 30);
+      focusSun(this.stage, position);
     }
     this.stage.world.animate(menu ? this.time : raceTime, this.settings.reducedMotion);
     this.drawPickups(pickups, this.settings.reducedMotion);
