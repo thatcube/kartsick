@@ -6,16 +6,19 @@ import { VertexData } from "@babylonjs/core/Meshes/mesh.vertexData";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { Texture } from "@babylonjs/core/Materials/Textures/texture";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
+import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import {
   BARNS, ORCHARD, ROAD, ROAD_WIDTH, SHOULDER_WIDTH, WATER_LEVEL, bankHeight, bankWidth,
-  butterbellHazards, terrainHeight, getCourse, isGap, projectRoad, surfaceHeight, isWater,
+  butterbellHazards, terrainHeight, getCourse, isGap, projectRoad, surfaceHeight, isWater, WINDMILL,
 } from "@kartsick/content";
 import { Atelier } from "./geometry";
 import { makeWorld } from "./world";
 import { makeCourseWorld } from "./course-worlds";
 import type { StudyWorld } from "./world";
-import { butterbellDecorationClearance } from "./butterbell-art";
+import { ButterbellArt, butterbellDecorationClearance } from "./butterbell-art";
 import { butterbellFieldColor, butterbellTexturePixels, BUTTERBELL_TEXTURE_SIZE, BUTTERBELL_TEXTURES } from "./butterbell-materials";
+import { butterbellWoodlandLayout } from "./butterbell-foliage";
+import { butterbellCountrysideHeight, butterbellDairyHamlet } from "./butterbell-backdrop";
 
 describe("Butterbell authored countryside", () => {
   const engine = new NullEngine(), scene = new Scene(engine);
@@ -261,6 +264,58 @@ describe("Butterbell authored countryside", () => {
     }
   });
 
+  it("frames the valley with grounded woodland outside all playable bounds, in eight shared batches", () => {
+    const trees = butterbellWoodlandLayout(), bounds = getCourse().bounds;
+    expect(trees).toEqual(butterbellWoodlandLayout());
+    expect(trees.length).toBeGreaterThan(80);
+    expect(trees.length).toBeLessThan(130);
+    expect(scene.metadata.butterbellWoodland).toEqual(trees);
+    for (const { x, z, y, radius } of trees) {
+      expect(x + radius < bounds.minX - 18 || x - radius > bounds.maxX + 18 ||
+        z + radius < bounds.minZ - 18 || z - radius > bounds.maxZ + 18).toBe(true);
+      expect(y).toBe(butterbellCountrysideHeight(x, z));
+    }
+    const batches = scene.meshes.filter(mesh => mesh.parent?.metadata?.backgroundWoodland);
+    expect(batches).toHaveLength(8);
+    expect(batches.reduce((sum, mesh) => sum + mesh.getTotalVertices(), 0)).toBeLessThan(20000);
+    expect(batches.every(mesh => !world.casters.some(caster => caster === mesh))).toBe(true);
+    for (const mesh of batches) {
+      const normals = mesh.getVerticesData(VertexBuffer.NormalKind)!;
+      for (let i = 0; i < normals.length; i += 3) {
+        expect(Math.hypot(normals[i], normals[i + 1], normals[i + 2])).toBeCloseTo(1, 4);
+      }
+    }
+    const crowns = rawMeshes.filter(([name]) => name === "butterbell woodland crown groups");
+    expect(crowns).toHaveLength(trees.length);
+    for (const [index, [, positions]] of crowns.entries()) {
+      const tree = trees[index];
+      for (let i = 0; i < positions.length; i += 3) {
+        expect(Math.hypot(positions[i] - tree.x, positions[i + 2] - tree.z)).toBeLessThan(tree.radius);
+        expect(positions[i + 1]).toBeGreaterThan(tree.y);
+        expect(positions[i + 1]).toBeLessThanOrEqual(tree.y + tree.height + 1e-6);
+      }
+    }
+  });
+
+  it("fits cottage foundations to their rotated hillside footprint", () => {
+    const isolated = new Scene(engine);
+    try {
+      butterbellDairyHamlet(new ButterbellArt(new Atelier(isolated)));
+      const footings = isolated.meshes.filter(mesh => mesh.name === "distant cottage fitted footing");
+      expect(footings).toHaveLength(11);
+      for (const footing of footings) {
+        const positions = footing.getVerticesData(VertexBuffer.PositionKind)!;
+        const matrix = footing.computeWorldMatrix(true);
+        for (let i = 0; i < positions.length; i += 6) {
+          const bottom = Vector3.TransformCoordinates(Vector3.FromArray(positions, i), matrix);
+          const top = Vector3.TransformCoordinates(Vector3.FromArray(positions, i + 3), matrix);
+          expect(bottom.y).toBeCloseTo(Math.min(top.y - .03,
+            butterbellCountrysideHeight(bottom.x, bottom.z) - .08), 3);
+        }
+      }
+    } finally { isolated.dispose(); }
+  });
+
   it("keeps the connected herb beds and hedges low and outside the racing banks", () => {
     const plants = rawMeshes.filter(([name]) => name === "butterbell layered hedge crowns" || name === "butterbell hedge leaf sprays");
     expect(plants.length).toBeGreaterThan(100);
@@ -288,6 +343,28 @@ describe("Butterbell authored countryside", () => {
     expect([scene.meshes.length, scene.materials.length, scene.textures.length]).toEqual(resources);
   });
 
+  it("shows the windmill's sail lattice from either approach and keeps its gallery within the solid core", () => {
+    const battens = boxes.mock.calls.filter(([name]) => name === "windmill canvas batten");
+    expect(battens).toHaveLength(32);
+    for (const [, position, size] of battens) {
+      expect(position[2] - size[2] / 2).toBeLessThan(.03);
+      expect(position[2] + size[2] / 2).toBeGreaterThan(.03);
+    }
+    const windows = boxes.mock.calls.filter(([name]) => name === "mill recessed window");
+    expect(windows).toHaveLength(8);
+    for (const axis of [0, 2]) {
+      const origin = axis === 0 ? WINDMILL.x : WINDMILL.z;
+      expect(windows.some(([, position]) => position[axis] < origin - 2)).toBe(true);
+      expect(windows.some(([, position]) => position[axis] > origin + 2)).toBe(true);
+    }
+    const posts = boxes.mock.calls.filter(([name]) => name === "windmill gallery baluster");
+    expect(posts).toHaveLength(12);
+    for (const [, position, size] of posts) {
+      expect(Math.hypot(position[0] - WINDMILL.x, position[2] - WINDMILL.z) +
+        Math.hypot(size[0], size[2]) / 2).toBeLessThan(3.5);
+    }
+  });
+
   it("retains individual atlas label pivots so mirror mode can keep their lettering readable", () => {
     const labels = scene.meshes.filter(mesh => mesh.name.startsWith("butterbell lettering "));
     expect(labels).toHaveLength(15);
@@ -307,7 +384,7 @@ describe("Butterbell authored countryside", () => {
     expect(bytes).toBeLessThanOrEqual(5 * 1024 * 1024);
     expect(scene.meshes.length).toBeLessThan(340);
     expect(scene.meshes.reduce((sum, m) => sum + m.getTotalVertices(), 0)).toBeLessThan(400000);
-    expect(scene.meshes.reduce((sum, m) => sum + m.getTotalIndices() / 3, 0)).toBeLessThan(420000);
+    expect(scene.meshes.reduce((sum, m) => sum + m.getTotalIndices() / 3, 0)).toBeLessThan(440000);
     expect(scene.materials.length).toBeLessThan(65);
     const textured = scene.meshes.filter(m => m.material instanceof StandardMaterial && m.material.diffuseTexture);
     expect(textured.length).toBeGreaterThan(35);

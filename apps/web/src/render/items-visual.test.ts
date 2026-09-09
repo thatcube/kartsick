@@ -1,10 +1,12 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { NullEngine } from "@babylonjs/core/Engines/nullEngine";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { Scene } from "@babylonjs/core/scene";
+import { ITEM_IDS } from "@kartsick/content";
+import type { ItemId } from "@kartsick/content";
 import { Atelier } from "./geometry";
-import { makePickupBox } from "./items";
+import { makeItemVisual, makePickupBox } from "./items";
 
 function inScene(run: (art: Atelier, scene: Scene) => void): void {
   const engine = new NullEngine(), scene = new Scene(engine);
@@ -118,5 +120,123 @@ it("preserves stable animation anchors and independent resources through pop, re
     expect(neighbors.flatMap(neighbor => neighbor.getChildMeshes()).every(mesh => !mesh.isDisposed())).toBe(true);
     makePickupBox(art);
     expect(scene.materials.length).toBe(materialCount);
+  });
+});
+
+it("constructs a genuinely recessed, opaque reel case instead of coplanar translucent overlays", () => {
+  inScene(art => {
+    const surfaces: { name: string; z: number; front: number; finish: string }[] = [];
+    const batch = art.batchModel.bind(art);
+    vi.spyOn(art, "batchModel").mockImplementation((root, animated, colors) => {
+      for (const mesh of root.getChildMeshes()) {
+        mesh.computeWorldMatrix(true);
+        const material = mesh.material as StandardMaterial;
+        expect(material.alpha).toBe(1);
+        expect(material.backFaceCulling).toBe(true);
+        surfaces.push({ name: mesh.name, z: mesh.position.z, front: mesh.getBoundingInfo().boundingBox.maximumWorld.z, finish: material.metadata.surfaceFinish });
+      }
+      batch(root, animated, colors);
+    });
+    makePickupBox(art);
+    const front = (name: string) => surfaces.filter(surface => surface.name === name && surface.z > 0);
+    const bed = front("deep shadowed three-reel cavity")[0];
+    const reels = front("curved porcelain delivery reel");
+    const rim = front("rounded vertical brass window rail");
+    expect(reels).toHaveLength(3);
+    expect(rim).toHaveLength(2);
+    expect(reels.every(reel => reel.front > bed.front + .075 && reel.front < rim[0].front - .005)).toBe(true);
+    expect(surfaces.filter(surface => surface.name === "corner protector domed rivet")).toHaveLength(8);
+    expect(surfaces.filter(surface => surface.name === "working brass lid catch")).toHaveLength(2);
+    expect(surfaces.filter(surface => surface.name === "raised rear lid hinge")).toHaveLength(4);
+    expect(surfaces.every(surface => surface.finish === "paint")).toBe(true);
+  });
+});
+
+it.each([
+  ["roadwork", "tiny roadwork rubber roller", 4, "folding metal A-frame strut", 2],
+  ["velvet", "tailored velvet rebound face", 1, "ivory cushion bound piping", 2],
+  ["static", "separately countable amber charge segment", 2, "four-turn insulated forward thrust coil", 1],
+  ["doubles", "oversized unmistakable inflation valve", 1, "printed rubber balloon wheel", 4],
+] as const)("preserves the countable physical identity of %s without adding gameplay components", (id, feature, count, secondary, secondaryCount) => {
+  inScene(art => {
+    let names: string[] = [];
+    const batch = art.batchModel.bind(art);
+    vi.spyOn(art, "batchModel").mockImplementation((root, animated, colors) => {
+      names = root.getChildMeshes().map(mesh => mesh.name);
+      batch(root, animated, colors);
+    });
+    const root = makeItemVisual(art, id);
+    expect(root.metadata).toEqual({ kind: "item", itemId: id });
+    expect(names.filter(name => name === feature)).toHaveLength(count);
+    expect(names.filter(name => name === secondary)).toHaveLength(secondaryCount);
+    expect(root.getChildTransformNodes(true).every(node => node.getClassName() === "Mesh")).toBe(true);
+    expect(root.position.asArray()).toEqual([0, 0, 0]);
+    expect(root.scaling.asArray()).toEqual([1, 1, 1]);
+  });
+});
+
+it.each(["slip", "bounce", "homing", "boost"] as const)("keeps three recognizable %s charges with identical finish and proportions", single => {
+  inScene(art => {
+    const standard = makeItemVisual(art, single), triple = makeItemVisual(art, `triple-${single}`);
+    const charges = triple.getChildTransformNodes(true);
+    expect(charges).toHaveLength(3);
+    const total = standard.getChildMeshes().reduce((sum, mesh) => sum + mesh.getTotalVertices(), 0);
+    for (const [index, charge] of charges.entries()) {
+      expect(charge.metadata).toEqual({ kind: "item-charge", itemId: single, charge: index + 1 });
+      expect(charge.scaling.asArray()).toEqual([.57, .57, .57]);
+      expect(charge.getChildMeshes().reduce((sum, mesh) => sum + mesh.getTotalVertices(), 0)).toBe(total);
+      expect(charge.getChildMeshes().map(mesh => mesh.material)).toEqual(standard.getChildMeshes().map(mesh => mesh.material));
+    }
+  });
+});
+
+it("distinguishes Zip Flask by its bellows and squeeze mechanism, not just its orange paint", () => {
+  inScene(art => {
+    const names = new Map<ItemId, string[]>();
+    const batch = art.batchModel.bind(art);
+    vi.spyOn(art, "batchModel").mockImplementation((root, animated, colors) => {
+      names.set(root.metadata.itemId, root.getChildMeshes().map(mesh => mesh.name));
+      batch(root, animated, colors);
+    });
+    makeItemVisual(art, "boost");
+    makeItemVisual(art, "rapid-boost");
+    expect(names.get("boost")).toContain("cream embossed can label");
+    expect(names.get("boost")).not.toContain("flask squeeze lever");
+    expect(names.get("rapid-boost")).toContain("flask squeeze lever");
+    expect(names.get("rapid-boost")!.filter(name => name === "separate flask compression fold")).toHaveLength(5);
+  });
+});
+
+it("preserves projectile, held-item and respawn transforms without material mutation or resource growth", () => {
+  inScene((art, scene) => {
+    const roots = ITEM_IDS.map(id => makeItemVisual(art, id));
+    const resources = { meshes: scene.meshes.length, materials: scene.materials.length, textures: scene.textures.length };
+    const finishes = scene.materials.map(material => {
+      const m = material as StandardMaterial;
+      return { material, diffuse: m.diffuseColor.asArray(), specular: m.specularColor.asArray(), power: m.specularPower, alpha: m.alpha };
+    });
+    for (let frame = 0; frame < 80; frame++) for (const [i, root] of roots.entries()) {
+      root.position.set(Math.sin(frame * .05) + i * 2, .9, frame * .13);
+      root.rotation.set(frame * .03, frame * .04, Math.sin(frame * .2) * .15);
+      root.scaling.setAll(frame === 0 ? 0 : .55 + frame / 160);
+      for (const mesh of root.getChildMeshes()) mesh.visibility = .5 + frame / 160;
+      expect(Array.from(root.computeWorldMatrix(true).m).every(Number.isFinite)).toBe(true);
+    }
+    expect(scene.meshes.length).toBe(resources.meshes);
+    expect(scene.materials.length).toBe(resources.materials);
+    expect(scene.textures.length).toBe(resources.textures);
+    for (const { material, diffuse, specular, power, alpha } of finishes) {
+      const m = material as StandardMaterial;
+      expect(m.diffuseColor.asArray()).toEqual(diffuse);
+      expect(m.specularColor.asArray()).toEqual(specular);
+      expect(m.specularPower).toBe(power);
+      expect(m.alpha).toBe(alpha);
+    }
+    for (const root of roots) root.dispose();
+    expect(scene.meshes).toHaveLength(0);
+    const rebuilt = makeItemVisual(art, "homing");
+    expect(rebuilt.position.asArray()).toEqual([0, 0, 0]);
+    expect(rebuilt.getChildMeshes().every(mesh => mesh.visibility === 1)).toBe(true);
+    expect(scene.materials.length).toBe(resources.materials);
   });
 });

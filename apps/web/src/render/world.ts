@@ -18,7 +18,7 @@ import { butterbellExposedGround } from "./butterbell-ground";
 import { butterbellFarmGround, butterbellPlantings } from "./butterbell-landscape";
 import { makeCourseGroundcover } from "./course-groundcover";
 import { butterbellCountrysideHeight, butterbellDairyHamlet } from "./butterbell-backdrop";
-import { butterbellOrchardTree, makeButterbellFoliageMaterials } from "./butterbell-foliage";
+import { butterbellOrchardTree, butterbellWoodland, makeButterbellFoliageMaterials } from "./butterbell-foliage";
 
 export interface StudyWorld extends CourseWorld {}
 
@@ -321,6 +321,7 @@ export function makeWorld(art: Atelier): StudyWorld {
   pond(art, scenery);
   horizon(art, materials);
   butterbellDairyHamlet(scenery);
+  butterbellWoodland(scenery, foliage);
   raceFestival(scenery);
   const rollers = HARVEST_POINTS.map((_, index) => {
     const root = new TransformNode(`hay-roller-${index}`, art.scene);
@@ -341,7 +342,7 @@ export function makeWorld(art: Atelier): StudyWorld {
   });
   updateButterbellHarvest(rollers, 0);
   const staticCasters = scenery.finish().filter(mesh => mesh.material !== materials.yard &&
-    mesh.material !== materials.verge);
+    mesh.material !== materials.verge && !mesh.parent?.metadata?.backgroundWoodland);
   const meshes = (root: TransformNode) => root.getChildMeshes().filter((mesh): mesh is Mesh => mesh instanceof Mesh);
   art.scene.metadata = { ...art.scene.metadata, butterbellFurniture: scenery.furniture };
   return {

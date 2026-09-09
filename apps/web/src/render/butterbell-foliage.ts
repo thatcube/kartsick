@@ -4,10 +4,12 @@ import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { RawTexture } from "@babylonjs/core/Materials/Textures/rawTexture";
 import { Texture } from "@babylonjs/core/Materials/Textures/texture";
 import { VertexBuffer } from "@babylonjs/core/Buffers/buffer";
-import { terrainHeight, surfaceHeight } from "@kartsick/content";
+import type { TransformNode } from "@babylonjs/core/Meshes/transformNode";
+import { terrainHeight, surfaceHeight, getCourse } from "@kartsick/content";
 import type { Atelier, Triple } from "./geometry";
 import type { ButterbellArt } from "./butterbell-art";
 import { BUTTERBELL as C, butterbellNoise as noise } from "./butterbell-materials";
+import { butterbellCountrysideHeight } from "./butterbell-backdrop";
 
 interface PlantMesh {
   positions: number[];
@@ -202,8 +204,8 @@ function addSprays(batch: PlantMesh, crown: Crown, scale: number, count = 3): vo
   }
 }
 
-function addBranch(batch: PlantMesh, points: Triple[], radii: number[], seed: number): void {
-  const sides = 6, base = batch.positions.length / 3;
+function addBranch(batch: PlantMesh, points: Triple[], radii: number[], seed: number, sides = 6): void {
+  const base = batch.positions.length / 3;
   for (let row = 0; row < points.length; row++) {
     const center = new Vector3(...points[row]);
     const tangent = new Vector3(...points[Math.min(row + 1, points.length - 1)])
@@ -256,8 +258,9 @@ function addApple(batch: PlantMesh, point: Triple, scale: number, seed: number):
   }
 }
 
-function emit(art: ButterbellArt, name: string, batch: PlantMesh, material: StandardMaterial, x: number, z: number): void {
-  const mesh = art.mesh(name, batch.positions, batch.indices, material, batch.colors, batch.uvs, art.root(x, z));
+function emit(art: ButterbellArt, name: string, batch: PlantMesh, material: StandardMaterial, x: number, z: number,
+  parent?: TransformNode): void {
+  const mesh = art.mesh(name, batch.positions, batch.indices, material, batch.colors, batch.uvs, parent ?? art.root(x, z));
   // Weld only the lighting at UV seams; separate opposite-facing surfaces stay separate.
   const normals = mesh.getVerticesData(VertexBuffer.NormalKind)!;
   const seams = new Map<string, number[]>();
@@ -375,4 +378,58 @@ export function butterbellShrub(art: ButterbellArt, materials: FoliageMaterials,
   }
   emit(art, "butterbell layered hedge crowns", leaves, materials.crown, x, z);
   emit(art, "butterbell hedge leaf sprays", sprays, materials.crown, x, z);
+}
+
+export interface WoodlandTree {
+  x: number; z: number; y: number; height: number; radius: number; seed: number;
+}
+
+/** Uneven groves frame the valley, rather than another uniform row around the circuit. */
+export function butterbellWoodlandLayout(): WoodlandTree[] {
+  const bounds = getCourse("butterbell").bounds, result: WoodlandTree[] = [];
+  const groves = [
+    [-301, 183, 34, 85, 16], [-106, 308, 83, 28, 17], [147, 329, 62, 35, 15],
+    [305, 90, 31, 86, 15], [286, -135, 25, 56, 11], [-295, -113, 26, 83, 16],
+    [43, -304, 90, 27, 14],
+  ];
+  for (let grove = 0; grove < groves.length; grove++) {
+    const [cx, cz, width, depth, count] = groves[grove];
+    for (let tree = 0; tree < count; tree++) {
+      const seed = grove * 97 + tree * 7, a = tree * 2.399 + noise(seed) * .4;
+      const r = Math.sqrt((tree + .7) / count), x = cx + Math.cos(a) * r * width, z = cz + Math.sin(a) * r * depth;
+      const height = 12 + noise(seed + 391) * 9, radius = height * .55;
+      if (!(x + radius < bounds.minX - 18 || x - radius > bounds.maxX + 18 ||
+        z + radius < bounds.minZ - 18 || z - radius > bounds.maxZ + 18)) continue;
+      if (result.some(p => Math.hypot(p.x - x, p.z - z) < (p.radius + radius) * .45)) continue;
+      result.push({ x, z, y: butterbellCountrysideHeight(x, z), height, radius, seed });
+    }
+  }
+  return result;
+}
+
+export function butterbellWoodland(art: ButterbellArt, materials: FoliageMaterials): void {
+  const trees = butterbellWoodlandLayout();
+  for (const tree of trees) {
+    const { x, z, y, height: h, seed } = tree, leaves = plantMesh(), wood = plantMesh();
+    const parent = art.root(x, z, 384);
+    parent.metadata = { backgroundWoodland: true };
+    const yaw = seed * .713, c = Math.cos(yaw), s = Math.sin(yaw);
+    const at = (dx: number, dy: number, dz: number): Triple =>
+      [x + (dx * c + dz * s) * h, y + dy * h, z + (dz * c - dx * s) * h];
+    addBranch(wood, [at(0, -.025, 0), at(.012, .38, -.013), at(-.018, .79, .014)],
+      [h * .033, h * .022, h * .005], seed, 4);
+    const side = noise(seed + 637) > .5 ? 1 : -1;
+    addBranch(wood, [at(.005, .43, 0), at(side * .11, .6, side * .04), at(side * .2, .78, side * .08)],
+      [h * .016, h * .01, h * .003], seed + side, 4);
+    const crowns = [[0, .71, 0, .3, .29], [-.18, .42, .04, .28, .28],
+      [.16, .50, -.095, .3, .29], [.02, .4, .20, .285, .26]];
+    for (const [i, [dx, dy, dz, width, tall]] of crowns.entries()) {
+      // The deliberately low-resolution outline is reserved for distant trees.
+      addCrown(leaves, { center: at(dx, dy, dz), radius: [h * width, h * tall, h * width * .87],
+        seed: seed + i * 3.7 }, 10, 4);
+    }
+    emit(art, "butterbell woodland boughs", wood, materials.bark, x, z, parent);
+    emit(art, "butterbell woodland crown groups", leaves, materials.crown, x, z, parent);
+  }
+  art.art.scene.metadata = { ...art.art.scene.metadata, butterbellWoodland: trees };
 }

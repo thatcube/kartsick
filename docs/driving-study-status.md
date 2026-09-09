@@ -7,6 +7,80 @@ single-kart Butterbell study remains available at `/?study` for controller compa
 The main entry runs the expanded local and direct-online development build.
 This is not the complete Kartsick release or the final production art/audio package.
 
+## Character, item and valley modeling
+
+The eight approved riders now use shaped jaws and muzzles, tailored clothing,
+articulated sleeves and gripping hands rather than larger stacks of round
+primitives. Back-view details include Clutch's goggle buckle and coverall yoke,
+Bramble's folded map cape and hanging scarf, Pompa's offset copper rolls and
+exposed hair scrolls, Bront's dorsal scutes, Rivet's swept vest panels, Pipvolt's
+folded ears, Bollo's envelope seam and Hunkle's diagonal sash. Their existing
+mounts, grip targets, facing and swap/lean animation interfaces are preserved.
+The shared eyes were subsequently fitted into shallower sockets after native
+close-ups showed excessive projection. Both the whites and colored eye layers
+remain visible.
+
+One complete cast measures 71,256 vertices, down from 83,990, with the same
+87 post-batch meshes and 210 cached construction materials versus 202 before.
+These isolated-cast counts are not the full race cost. Front and actual
+driving-camera compositions were inspected for all four pairs on the native
+Apple GPU, with an additional High-quality Road Crew close-up and Butterbell
+barn view. This is another art checkpoint, not final visual acceptance.
+
+All 23 item IDs have reauthored silhouettes and construction: curved chimes
+and rubber reels, wax sachets, pressure vessels, readable clock faces,
+wind-up wings, upholstered bumpers and inflatable decoys. Triple variants
+still expose three charges; a barrier, bumper or decoy model remains one
+authoritative effect rather than duplicating the gameplay count. The delivery
+pickup has a rounded shell, recessed three-reel faces, brass window framing,
+cast corners, lid catches and a shaped handle. Both stamp faces and the
+existing lamp/burst/handle anchors are retained. Pickups remain opaque,
+with two batches; roulette, bob/spin/reveal/respawn, projectile behavior and
+effect lifetimes are unchanged.
+
+The standalone inventory of all 23 items plus one pickup drops from 58,709
+to 49,720 vertices and from 102,120 to 93,428 triangles. Its batches increase
+from 49 to 73 and materials from 31 to 46, retaining zero item textures.
+One pickup is 7,780 vertices and 15,028 triangles. These are explicit tradeoffs,
+not a claim that the added material distinction has no rendering cost.
+The catalog, single/double pickup close-ups and actual road-scale pickups
+were inspected in the native browser.
+
+Butterbell's valley now has 103 broad-canopy trees in seven irregular woodland
+groups, entirely beyond the recovery boundary. They share the existing foliage
+textures and eight coarse background batches, and do not enter the near-track
+shadow-caster list. An initial coarse silhouette was rejected in close-up
+camera compositions and smoothed rather than hidden behind a resource budget.
+The course-only triangle ceiling rises from 420,000 to 440,000; its 340-mesh,
+400,000-vertex, 65-material and 5-MiB base-texture ceilings remain unchanged.
+The native stage before adding karts reports 395,627 vertices and 431,999
+triangles, including its shared stage geometry.
+
+The distant cottages have side windows/eaves and foundations fitted to their
+rotated hillside footprints. The windmill has windows on all four sides and a
+timber viewing gallery inside its existing collision radius. Its sail battens
+are visible from both approaches instead of disappearing behind the canvas.
+Road shape, terrain physics, item locations, course versions, hazards, recovery
+and all original collision cores remain unchanged.
+
+The fixed eight-kart composition reports 856,372 vertices compared with
+842,550 before this pass, about 1.6% higher after the environment and character
+changes; this bench excludes live pickups and effects. The actual race renderer also completed
+18 normal/mirrored/normal course loads with eight retained kart models and
+12 pickups: no vertex, texture or mesh accumulation, one fewer Butterbell
+material after its first unload, and identical subsequent warmed cycles.
+Single/four-view/single transitions restore all rider mesh visibility and
+retain the same resources. The existing obstruction fade is still visible
+as translucent following karts in crowded split-screen views; that visual
+policy was not changed in this pass.
+
+These are fixed renderer compositions and lifecycle checks, not driven races,
+controller acceptance or native-GPU 60 FPS certification. The repeatable
+catalog, pair and real-race benches have bounded lifetimes and release their
+diagnostic scenes without changing saved settings. Matching Playwright cases
+are present, but the standalone browser-launch failure described below still
+prevents claiming those new cases passed on this host.
+
 ## All-course small foliage
 
 Butterbell now has 5,800 small plants: irregular meadow drifts, orchard clover,
@@ -39,10 +113,10 @@ Placement excludes every main/shortcut corridor, swept hazard area, flight
 approach/landing, scenery core and unsuitable water/slope support. Course
 physics, collision shapes, route versions and recovery behavior are unchanged.
 
-The extra Butterbell planting increases the fixed eight-kart scene from
-738,994 to 842,550 reported vertices, approximately 14%. Its course-only
-limits are now 340 meshes, 400,000 vertices and 420,000 triangles; the existing
-65-material and 5-MiB base-texture limits are unchanged. The addition is bounded
+At that checkpoint, the extra Butterbell planting increased the fixed
+eight-kart scene from 738,994 to 842,550 reported vertices, approximately 14%. Its course-only
+limits were 340 meshes, 400,000 vertices and 420,000 triangles; the existing
+65-material and 5-MiB base-texture limits were unchanged. The addition is bounded
 and spatially culled, not a claim that more geometry is free.
 
 Captioned driving-camera views were inspected on the shared browser's Apple

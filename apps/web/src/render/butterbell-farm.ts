@@ -145,9 +145,31 @@ export function butterbellWindmill(art: ButterbellArt): TransformNode {
   art.box("windmill oak doorway", [x, y + 1.4, z - 3.29], [1.65, 2.8, .18], C.roofShadow, "wood");
   art.box("windmill doorway lintel", [x, y + 2.85, z - 3.25], [1.94, .16, .22], C.dairy, "paint");
   for (const level of [6, 10.5]) {
-    const front = z - (3.5 - level / 18 * 1.5);
-    art.box("mill recessed window", [x, y + level, front - .02], [1.1, 1.3, .1], C.roofShadow, "paint");
-    for (const side of [-1, 1]) art.box("mill window shutter", [x + side * .73, y + level, front + .07], [.28, 1.35, .12], C.dairy, "paint");
+    const radius = 3.5 - level / 18 * 1.5;
+    for (const angle of [0, Math.PI / 2, Math.PI, Math.PI * 1.5]) {
+      const point = (across: number, out: number): Triple =>
+        [x + Math.cos(angle) * across - Math.sin(angle) * out, y + level,
+          z - Math.sin(angle) * across - Math.cos(angle) * out];
+      art.box("mill recessed window", point(0, radius + .02),
+        [1.1, 1.3, .1], C.roofShadow, "paint").rotation.y = angle;
+      for (const side of [-1, 1]) art.box("mill window shutter", point(side * .73, radius - .07),
+        [.28, 1.35, .12], C.dairy, "paint").rotation.y = angle;
+    }
+  }
+  // The gallery stays inside the mill's existing 3.5 m solid footprint.
+  art.cylinder("windmill timber gallery", [x, y + 8.2, z], 6.9, 6.9, .18, C.timber, "wood");
+  for (const level of [8.75, 9.35]) {
+    const rail: Triple[] = [];
+    for (let i = 0; i <= 16; i++) {
+      const angle = i / 16 * Math.PI * 2;
+      rail.push([x + Math.cos(angle) * 3.32, y + level, z + Math.sin(angle) * 3.32]);
+    }
+    art.tube("windmill gallery handrail", rail, .05, C.cream, "paint");
+  }
+  for (let i = 0; i < 12; i++) {
+    const angle = i / 12 * Math.PI * 2;
+    art.box("windmill gallery baluster", [x + Math.cos(angle) * 3.32, y + 8.78, z + Math.sin(angle) * 3.32],
+      [.1, 1.2, .1], C.cream, "paint");
   }
   art.cylinder("windmill roof skirt", [x, y + 18.03, z], 5.9, 5.9, .12, C.roofShadow, "metal");
   art.cylinder("windmill conical roof", [x, y + 19, z], .2, 5.9, 2, C.roof, "paint");
@@ -164,8 +186,8 @@ export function butterbellWindmill(art: ButterbellArt): TransformNode {
       .08, 2.2, .03, 1.6, 2.45, .03, 1.9, 8.2, .03, .08, 7.95, .03,
       .08, 2.2, .03, 1.6, 2.45, .03, 1.9, 8.2, .03, .08, 7.95, .03,
     ], [0, 1, 2, 0, 2, 3, 6, 5, 4, 7, 6, 4], art.art.surface(C.cream, "fabric"), undefined, undefined, blade);
-    for (let rung = 0; rung < 8; rung++) art.box("windmill canvas batten", [.84, 2.5 + rung * .77, -.03], [1.78, .07, .1], C.timber, "wood", blade);
-    art.box("windmill sail outer rail", [1.7, 5.25, -.03], [.075, 6.1, .1], C.timber, "wood", blade);
+    for (let rung = 0; rung < 8; rung++) art.box("windmill canvas batten", [.84, 2.5 + rung * .77, 0], [1.78, .07, .16], C.timber, "wood", blade);
+    art.box("windmill sail outer rail", [1.7, 5.25, 0], [.075, 6.1, .16], C.timber, "wood", blade);
   }
   art.art.batchModel(rotor, new Set(), true);
   return rotor;

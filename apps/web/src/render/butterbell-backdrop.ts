@@ -28,7 +28,9 @@ export function butterbellDairyHamlet(art: ButterbellArt): void {
       [width / 2, depth / 2], [-width / 2, depth / 2], [-width / 2, -depth / 2]];
     const foundation: number[] = [], foundationIndices: number[] = [];
     for (const [dx, dz] of corners) {
-      foundation.push(x + dx, Math.min(y + 1.27, butterbellCountrysideHeight(x + dx, z + dz) - .08), z + dz,
+      const worldX = x + Math.cos(yaw) * dx + Math.sin(yaw) * dz;
+      const worldZ = z - Math.sin(yaw) * dx + Math.cos(yaw) * dz;
+      foundation.push(x + dx, Math.min(y + 1.27, butterbellCountrysideHeight(worldX, worldZ) - .08), z + dz,
         x + dx, y + 1.3, z + dz);
     }
     for (let edge = 0; edge < 4; edge++) {
@@ -66,6 +68,16 @@ export function butterbellDairyHamlet(art: ButterbellArt): void {
       [.9, 3, .9], "#b09b7b");
     art.box("distant cottage chimney cap", [x + width * .29, y + height + 3.42, z + depth * .2],
       [1.2, .18, 1.2], C.cream);
+    for (const side of [-1, 1]) {
+      art.box("distant cottage side eave", [x + side * (width / 2 + .25), y + height, z],
+        [.28, .24, depth + 1], C.cream, "paint");
+      for (const bay of [-1, 1]) {
+        art.box("distant cottage side window", [x + side * (width / 2 + .045), y + height * .58, z + bay * depth * .24],
+          [.12, 1.9, 1.65], C.cream, "paint");
+        art.box("distant cottage side pane", [x + side * (width / 2 + .13), y + height * .58, z + bay * depth * .24],
+          [.08, 1.48, 1.21], C.roofShadow, "paint");
+      }
+    }
     if (house === 5) {
       art.box("valley dairy bell tower", [x, y + height + 3.9, z], [3.2, 4.4, 3.2], C.cream, "paint");
       art.box("valley bell arch shadow", [x, y + height + 4.5, z - 1.63], [1.7, 2.2, .1], C.roofShadow);

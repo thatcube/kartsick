@@ -59,7 +59,9 @@ export function finishModel(art: Atelier, root: TransformNode, fallback: Surface
   for (const [finish, colors] of Object.entries(palette)) for (const color of colors) finishes.set(color.toUpperCase(), finish as SurfaceFinish);
   for (const mesh of root.getChildMeshes()) {
     const material = mesh.material;
-    if (!(material instanceof StandardMaterial) || material.disableLighting || material.metadata?.surfaceFinish !== "matte") continue;
+    if (!(material instanceof StandardMaterial) || material.disableLighting || material.metadata?.surfaceFinish !== "matte" ||
+      material.alpha !== 1 || !material.backFaceCulling ||
+      material.getActiveTextures().some(texture => texture !== material.reflectionTexture)) continue;
     const color = material.diffuseColor.toHexString();
     mesh.material = art.surface(color, finishes.get(color) ?? fallback);
   }
@@ -68,10 +70,18 @@ export function finishModel(art: Atelier, root: TransformNode, fallback: Surface
 export function eyes(art: Atelier, parent: TransformNode, spread: number, y: number, z: number, size = 1, sleepy = false, iris = "#467c85"): void {
   for (const side of [-1, 1]) {
     const x = side * spread, height = (sleepy ? 0.125 : 0.19) * size;
-    surface(art, soft(art, parent, "eye porcelain", [x, y, z], [0.157 * size, height, 0.086], CREAM), CREAM, "paint");
-    surface(art, soft(art, parent, "separate iris", [x - side * 0.011, y - 0.005, z + 0.039], [0.086 * size, height * 0.73, 0.032], iris), iris, "paint");
-    surface(art, soft(art, parent, "focused pupil", [x - side * 0.011, y - 0.008, z + 0.055], [0.041 * size, height * 0.52, 0.016], INK), INK, "paint");
-    surface(art, soft(art, parent, "eye catchlight", [x - 0.023, y + height * 0.21, z + 0.064], [0.022, 0.029, 0.012], "#ffffff"), "#ffffff", "paint");
+    const white = art.sculpt("eye porcelain", [[-0.5, 0.14, 0.06], [-0.33, 0.47, 0.22],
+      [0.18, 0.5, 0.27], [0.44, sleepy ? 0.42 : 0.28, 0.16], [0.5, 0.12, 0.04]], CREAM, parent, 0.78, 12);
+    white.position.set(x, y, z - 0.009);
+    white.scaling.set(0.157 * size, height, 0.055);
+    white.rotation.z = side * (sleepy ? 0.12 : -0.055);
+    surface(art, white, CREAM, "paint");
+    surface(art, art.oval("separate iris", [x - side * 0.011, y - 0.006, z + 0.0055],
+      [0.074 * size, height * 0.69, 0.006], iris, parent, 0.9, 6), iris, "paint");
+    surface(art, art.oval("focused pupil", [x - side * 0.011, y - 0.008, z + 0.009],
+      [0.034 * size, height * 0.49, 0.004], INK, parent, 0.86, 6), INK, "paint");
+    surface(art, art.oval("eye catchlight", [x - 0.018, y + height * 0.18, z + 0.012],
+      [0.018, 0.022, 0.003], "#ffffff", parent, 1, 4), "#ffffff", "paint");
   }
 }
 
@@ -94,18 +104,31 @@ export function riderRig(art: Atelier, id: CharacterId, root: TransformNode, hea
     if (anatomy.noodle) {
       art.sweep("soft noodle arm", [[0, 0, 0], [side * 0.06, 0.21, -0.04], [0, 0.57, 0]], [anatomy.armWidth, anatomy.armWidth * 0.8, anatomy.armWidth * 0.7], anatomy.sleeve, arm);
     } else {
-      art.sculpt("bent tailored sleeve", [[0, 0.045, 0.045], [0.07, anatomy.armWidth, anatomy.armWidth], [0.26, anatomy.armWidth * 0.91, anatomy.armWidth * 0.92, side * 0.055, -0.04], [0.43, anatomy.armWidth * (anatomy.shaggy ? 1.08 : 0.75), anatomy.armWidth * 0.77, side * 0.025, -0.02], [0.57, 0.045, 0.045]], anatomy.sleeve, arm, 1, 16);
-      soft(art, arm, "sleeve cuff", [0, 0.5, 0], [anatomy.armWidth * 1.8, 0.085, anatomy.armWidth * 1.6], anatomy.sleeve, 0.7);
-      if (anatomy.shaggy) for (let i = 0; i < 4; i++) {
-        art.sweep("hanging forearm fringe", [[side * 0.1, 0.16 + i * 0.08, -0.05], [side * 0.19, 0.27 + i * 0.06, -0.06], [side * 0.14, 0.34 + i * 0.05, -0.05]], [0.06, 0.055, 0.003], anatomy.sleeve, arm);
+      art.sculpt("bent tailored sleeve", [[0, 0.055, 0.045], [0.085, anatomy.armWidth, anatomy.armWidth * 0.84],
+        [0.25, anatomy.armWidth * 0.85, anatomy.armWidth * 0.76, side * 0.045, -0.035],
+        [0.4, anatomy.armWidth * (anatomy.shaggy ? 1.03 : 0.72), anatomy.armWidth * 0.67, side * 0.03, -0.02],
+        [0.51, anatomy.armWidth * 0.66, anatomy.armWidth * 0.59], [0.57, 0.045, 0.035]], anatomy.sleeve, arm, 0.76, 12);
+      art.sculpt("turned sleeve cuff", [[0.47, anatomy.armWidth * 0.68, anatomy.armWidth * 0.6],
+        [0.49, anatomy.armWidth * 0.78, anatomy.armWidth * 0.68], [0.53, anatomy.armWidth * 0.76, anatomy.armWidth * 0.65],
+        [0.55, anatomy.armWidth * 0.61, anatomy.armWidth * 0.53]], anatomy.sleeve, arm, 0.68, 10);
+      if (anatomy.shaggy) for (let i = 0; i < 3; i++) {
+        art.sculpt("flat hanging forearm lock", [[0.13 + i * 0.09, 0.055, 0.025, side * 0.13, -0.065],
+          [0.24 + i * 0.065, 0.075, 0.029, side * 0.18, -0.07],
+          [0.35 + i * 0.055, 0.012, 0.009, side * 0.19, -0.09]], anatomy.sleeve, arm, 0.72, 8);
       }
     }
     const hand = node(art, "gripping hand", root);
     const h = anatomy.handSize;
-    soft(art, hand, "mitten palm", [0, 0, 0], [h, h * 0.85, h * 0.85], anatomy.hand, 0.76);
-    soft(art, hand, "curled thumb", [-side * h * 0.31, -h * 0.08, h * 0.2], [h * 0.39, h * 0.46, h * 0.45], anatomy.hand);
+    const palm = art.sculpt("shaped grip palm", [[-0.39, 0.29, 0.24, -side * 0.03, 0.01],
+      [-0.21, 0.46, 0.36, -side * 0.025], [0.11, 0.5, 0.36],
+      [0.32, 0.39, 0.27, side * 0.035, -0.015], [0.39, 0.24, 0.18]], anatomy.hand, hand, 0.65, 12);
+    palm.scaling.setAll(h);
+    const thumb = art.sweep("opposed curled thumb", [[-side * h * 0.34, h * 0.06, h * 0.07],
+      [-side * h * 0.43, -h * 0.13, h * 0.25], [-side * h * 0.25, -h * 0.23, h * 0.34]],
+    [h * 0.19, h * 0.18, h * 0.09], anatomy.hand, hand, 8);
+    thumb.scaling.z = 0.9;
     art.sweep("grip crease", [[-h * 0.22, 0.018, h * 0.43], [0, 0.035, h * 0.45], [h * 0.22, 0.018, h * 0.43]], [0.006, 0.008, 0.006], anatomy.sleeve, hand, 6);
-    soft(art, hand, "curled finger ridge", [0, -h * 0.17, h * 0.31], [h * 0.81, h * 0.36, h * 0.35], anatomy.hand, 0.7);
+    soft(art, hand, "curled finger ridge", [0, -h * 0.2, h * 0.27], [h * 0.79, h * 0.27, h * 0.33], anatomy.hand, 0.62);
     finishModel(art, arm, anatomy.sleeveFinish ?? "fabric");
     finishModel(art, hand, anatomy.hand === CREAM || anatomy.hand === MINT || anatomy.noodle ? "fabric" : "skin");
     return { side, arm, hand, direction: new Vector3() };

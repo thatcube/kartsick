@@ -55,8 +55,8 @@ export class ButterbellArt {
     this.signs.backFaceCulling = false;
   }
 
-  root(x: number, z: number): TransformNode {
-    const key = `${Math.floor(x / 64)}:${Math.floor(z / 64)}`;
+  root(x: number, z: number, cellSize = 64): TransformNode {
+    const key = `${Math.floor(x / cellSize)}:${Math.floor(z / cellSize)}${cellSize === 64 ? "" : `:${cellSize}m`}`;
     let root = this.cells.get(key);
     if (!root) {
       root = new TransformNode(`butterbell scenery ${key}`, this.art.scene);

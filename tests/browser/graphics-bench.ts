@@ -7,6 +7,7 @@ import { BODY_IDS, CHARACTER_IDS, DEFAULT_BUILD, getCourse, normalizeBuild } fro
 import type { CourseId } from "@kartsick/content";
 import { createKart, NEUTRAL } from "@kartsick/simulation";
 import { measureKartComposition } from "./graphics-composition";
+import { captureGraphicsFrame } from "./graphics-capture";
 
 /** The same bounded, renderer-only diagnostic works in Playwright and the shared preview browser. */
 export async function createGraphicsBench(id: CourseId, quality: "balanced" | "high") {
@@ -47,30 +48,32 @@ export async function createGraphicsBench(id: CourseId, quality: "balanced" | "h
     const material = makeContactShadowMaterial(active.scene);
     const contacts = models.map(() => makeContactShadow(active.scene, material));
     const states = models.map(() => createKart(course));
-    let pose = .018, detailView = false;
+    let pose = .018, detailView = false, focusIndex = 0;
     const render = (u: number, detail = false) => {
       if (!stage) throw new Error("This graphics diagnostic has been disposed.");
       for (let i = 0; i < models.length; i++) {
-        const road = course.sampleRoad(u + (i ? .011 + Math.floor((i - 1) / 2) * .012 : 0));
-        const lateral = i ? (i % 2 ? -1 : 1) * 1.8 : 0;
+        const slot = (i - focusIndex + models.length) % models.length;
+        const road = course.sampleRoad(u + (slot ? .011 + Math.floor((slot - 1) / 2) * .012 : 0));
+        const lateral = slot ? (slot % 2 ? -1 : 1) * 1.8 : 0;
         Object.assign(states[i], { x: road.x + road.dz * lateral, y: road.y + .42,
           z: road.z - road.dx * lateral, yaw: Math.atan2(road.dx, road.dz), roadU: road.u });
         updateKartPose(models[i], states[i], states[i], NEUTRAL, 1, 1 / 60, false, settings, course.surfaceHeight, false);
         updateContactShadow(contacts[i], course, models[i].root);
       }
+      const focused = models[focusIndex], state = states[focusIndex];
       chase.started = false;
-      chase.update(models[0].root.position, states[0].yaw, states[0], 1 / 60, false, 0, settings, course.surfaceHeight);
+      chase.update(focused.root.position, state.yaw, state, 1 / 60, false, 0, settings, course.surfaceHeight);
       if (detail) {
-        const state = states[0], fx = Math.sin(state.yaw), fz = Math.cos(state.yaw);
+        const fx = Math.sin(state.yaw), fz = Math.cos(state.yaw);
         active.camera.position.set(state.x + fx * 4.5 - fz * 3.5, state.y + 2, state.z + fz * 4.5 + fx * 3.5);
-        const target = models[0].root.position.clone();
+        const target = focused.root.position.clone();
         target.y += .85;
         active.camera.setTarget(target);
       }
-      focusSun(active, states[0]);
+      focusSun(active, state);
       active.world.animate(0, true);
       active.scene.render();
-      return measureKartComposition(models[0].meshes, active.camera, active.engine.getRenderWidth(), active.engine.getRenderHeight());
+      return measureKartComposition(focused.meshes, active.camera, active.engine.getRenderWidth(), active.engine.getRenderHeight());
     };
     render(pose);
     let readyTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -82,12 +85,20 @@ export async function createGraphicsBench(id: CourseId, quality: "balanced" | "h
     active.engine.runRenderLoop(() => render(pose, detailView));
     const evidence = { ...count(), worldResources, quality, courseVersion: course.version, renderer: active.engine.getGlInfo(),
       groundcover: active.scene.metadata?.groundcover,
+      woodlandTrees: id === "butterbell" ? active.scene.metadata?.butterbellWoodland?.length ?? 0 : 0,
       lighting: { fog: active.scene.fogColor.asArray(), sun: active.light.intensity, fill: active.fill.intensity,
         direction: active.light.direction.asArray(), exposure: active.scene.imageProcessingConfiguration.exposure },
       note: "Fixed renderer-only compositions, not a driven race or a performance certification." };
-    return { evidence, dispose, render: (u: number, detail = false, name = "driving view") => {
-      pose = u; detailView = detail;
-      caption.textContent = `${id} / ${quality} / ${name} / u=${u}`;
+    const capture = async () => {
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      const composition = render(pose, detailView);
+      return { image: captureGraphicsFrame(canvas, caption.textContent ?? ""), evidence: { ...evidence, ...count(), composition, u: pose, detail: detailView,
+        characters: [CHARACTER_IDS[focusIndex], CHARACTER_IDS[(focusIndex + 1) % models.length]] } };
+    };
+    return { evidence, dispose, capture, render: (u: number, detail = false, name = "driving view", focus = 0) => {
+      if (!Number.isInteger(focus) || focus < 0 || focus >= models.length) throw new RangeError("Unknown graphics-bench kart.");
+      pose = u; detailView = detail; focusIndex = focus;
+      caption.textContent = `${id} / ${quality} / ${name} / u=${u} / ${CHARACTER_IDS[focus]} + ${CHARACTER_IDS[(focus + 1) % models.length]}`;
       return render(u, detail);
     } };
   } catch (error) {
