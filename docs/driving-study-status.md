@@ -7,6 +7,50 @@ single-kart Butterbell study remains available at `/?study` for controller compa
 The main entry runs the expanded local and direct-online development build.
 This is not the complete Kartsick release or the final production art/audio package.
 
+## First graphics-overhaul checkpoint
+
+Butterbell now has an authored dairy-festival environment: restrained aggregate
+asphalt, packed verges, continuous planted fields, sculpted orchard crowns,
+gambrel barns with joinery and fitted foundations, detailed silos, lattice
+windmill sails, and a bell-topped starting gantry. Seven locally generated
+material/lettering textures replace the earlier mostly untextured scenery.
+Hidden raw terrain is clipped beneath the existing road and banks, fixing the
+grass that previously covered part of the orchard lane without changing physics.
+
+All eight riders have reauthored seated anatomy, facial volumes and outfits.
+The tandem mounts are lower and closer together; cockpits are recessed rather
+than solid through the riders. Coachwork, wishbones, exhausts, tire carcasses,
+tread, hubs and canopy rigging have been refined. The default model's
+width/height/length changed from approximately 2.39/2.90/3.61 metres to
+2.59/2.35/3.10 metres, retaining the shared tire contact plane and existing
+driving/collision parameters.
+
+The shared renderer distinguishes paint, metal, rubber, fabric, skin and wood
+through finish-aware materials and batching. Original sky reflections, a cloud
+atmosphere, HDR tone mapping, quality-scaled shadows, restrained high-quality
+bloom and soft contact shadows provide a consistent lighting baseline. This
+uses Babylon StandardMaterial finishes, not a claim of a complete PBR pipeline.
+Day, dusk and indoor skies preserve each world's setting; mirror mode keeps
+the sun, reflections and readable lettering consistent.
+
+Repeatable high-quality composition captures put the default kart at about
+18.3% of viewport width and 34.9% of height. Those captures supply poses for
+visual comparison; they are not driven races or performance measurements.
+Separate browser coverage drives the garage-selected roster, four-player
+split/tandem layouts, a complete study glide and next lap, pickup roulette and
+Towbell recovery, and normal/mirrored course transitions without accumulating
+world resources. Geometry coverage includes nonzero normals and road/bank
+clearance; cold browser runs discover shader dependencies before capture.
+
+This is a playable first art-overhaul checkpoint, not final visual approval or
+the finished quality of the reference screenshots. Landscape composition,
+environment density and finer asset/animation polish still need development.
+The other five environments have the shared renderer and new karts, but have
+not received Butterbell's dedicated art rebuild. Physical-controller feedback,
+native-GPU performance and final art/audio acceptance remain open.
+
+## Previous terrain, items and audio checkpoint
+
 The current feedback pass adds a 1.6-second authoritative item roulette, with
 decelerating HUD symbols, a settling cue, and a steady-symbol progress indicator
 under reduced motion. The chosen result is reserved at collection and cannot be

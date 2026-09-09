@@ -538,7 +538,7 @@ export function makeLastlightWorld(art: Atelier, course: CourseQuery): CourseWor
   return {
     casters,
     environment: {
-      sky: LASTLIGHT.palette.sky, fogStart: 170, fogEnd: 850,
+      sky: LASTLIGHT.palette.sky, skyStyle: "dusk", fogStart: 170, fogEnd: 850,
       sun: "#ffcfad", sunIntensity: 1.12, fill: "#d2d4f0", fillIntensity: 0.72, ground: "#777486",
     },
     animate(time: number) {

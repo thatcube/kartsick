@@ -3,7 +3,10 @@ import { freshGame, GAME_STORAGE_KEY } from "../../apps/web/src/game-storage";
 import type { RaceRuntime } from "../../apps/web/src/race-runtime";
 
 declare global {
-  interface Window { __KARTSICK_RACE__?: { read: () => ReturnType<RaceRuntime["snapshot"]> } }
+  interface Window {
+    __KARTSICK_RACE__?: { read: () => ReturnType<RaceRuntime["snapshot"]> };
+    __rouletteObservation?: { read(): string[]; stop(): void };
+  }
 }
 const pilotUrl = "/@fs" + new URL("./pilot.ts", import.meta.url).pathname;
 
@@ -44,22 +47,24 @@ test("random pickups visibly spin, settle and survive a controller-operated Towb
     await page.evaluate(() => { window.__testPad!.buttons[6] = { value: 0, pressed: false, touched: false }; });
     expect(await page.evaluate(() => window.__KARTSICK_RACE__!.read().race.karts[0].held.every(item => item === null))).toBe(true);
     await page.screenshot({ path: info.outputPath("delivery-case-approach.png") });
+    await page.evaluate(() => {
+      const symbols = new Set<string>();
+      const observer = new MutationObserver(() => {
+        document.querySelectorAll('.held-item[data-spinning="true"] use').forEach(use => {
+          const symbol = use.getAttribute("href");
+          if (symbol) symbols.add(symbol);
+        });
+      });
+      observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["href", "data-spinning"] });
+      window.__rouletteObservation = { read: () => [...symbols], stop: () => observer.disconnect() };
+    });
     await page.evaluate(async url => { const pilot = await import(/* @vite-ignore */ url); pilot.startFullRacePilot(60_000); }, pilotUrl);
     const spinning = page.locator('.held-item[data-spinning="true"]');
     await expect(spinning.first()).toBeVisible({ timeout: 60_000 });
     await page.evaluate(async url => { const pilot = await import(/* @vite-ignore */ url); pilot.stopPilot(); }, pilotUrl);
     const selected = await page.evaluate(() => window.__KARTSICK_RACE__!.read().race.karts[0].held.map(h => h && ({ id: h.id, item: h.item })));
-    const symbols = await page.evaluate(async () => {
-      const symbols = new Set<string>();
-      const deadline = performance.now() + 600;
-      while (performance.now() < deadline) {
-        document.querySelectorAll('.held-item[data-spinning="true"] use').forEach(use => symbols.add(use.getAttribute("href") ?? ""));
-        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
-      }
-      return [...symbols];
-    });
-    expect(symbols.length).toBeGreaterThan(2);
     await expect(spinning).toHaveCount(0);
+    expect(await page.evaluate(() => window.__rouletteObservation!.read().length)).toBeGreaterThan(2);
     const after = await page.evaluate(() => window.__KARTSICK_RACE__!.read().race.karts[0].held);
     expect(after.map(h => h && ({ id: h.id, item: h.item }))).toEqual(selected);
     expect(after.every(h => !h || h.roulette === 0)).toBe(true);
@@ -78,6 +83,10 @@ test("random pickups visibly spin, settle and survive a controller-operated Towb
     await page.screenshot({ path: info.outputPath("back-on-track.png") });
     expect(errors).toEqual([]);
   } finally {
+    await page.evaluate(() => {
+      window.__rouletteObservation?.stop();
+      delete window.__rouletteObservation;
+    });
     await page.evaluate(async url => { const pilot = await import(/* @vite-ignore */ url); pilot.stopPilot(); }, pilotUrl);
   }
 });

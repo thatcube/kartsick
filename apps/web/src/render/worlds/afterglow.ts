@@ -256,7 +256,7 @@ export function makeAfterglowWorld(art: Atelier, course: CourseQuery): CourseWor
   return {
     casters,
     environment: {
-      sky: AFTERGLOW.palette.sky, fogStart: 145, fogEnd: 470,
+      sky: AFTERGLOW.palette.sky, skyStyle: "dusk", fogStart: 145, fogEnd: 470,
       sun: "#ffd1b0", sunIntensity: 1.05, fill: "#acb6ee", fillIntensity: 0.85, ground: "#626586",
     },
     animate(time, reducedMotion = false) {

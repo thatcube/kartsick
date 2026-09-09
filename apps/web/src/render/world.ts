@@ -1,393 +1,373 @@
-import { Color3, Color4 } from "@babylonjs/core/Maths/math.color";
-import { DynamicTexture } from "@babylonjs/core/Materials/Textures/dynamicTexture";
-import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
+import { Color3 } from "@babylonjs/core/Maths/math.color";
 import { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import {
-  BARNS, GAP_END, GAP_START, HAY_BALES, ORCHARD, ROAD, ROAD_WIDTH, SHOULDER_WIDTH, WATER_LEVEL, WINDMILL,
-  bankHeight, bankWidth, butterbellHazards, hasRail, isGap, projectRoad, sampleRoad, surfaceHeight, terrainHeight,
+  BARNS, GAP_END, GAP_START, HAY_BALES, ORCHARD, ROAD, ROAD_WIDTH, SHOULDER_WIDTH, WATER_LEVEL,
+  bankHeight, bankWidth, hasRail, isGap, isWater, projectRoad, sampleRoad, surfaceHeight, terrainHeight,
 } from "@kartsick/content";
+import type { RoadPoint } from "@kartsick/content";
 import { Atelier } from "./geometry";
 import type { Triple } from "./geometry";
+import type { CourseWorld } from "./world-types";
+import { ButterbellArt, butterbellDecorationClearance, butterbellTree } from "./butterbell-art";
+import type { ButterbellSign } from "./butterbell-art";
+import { BUTTERBELL as C, butterbellFieldColor, butterbellNoise as noise, makeButterbellMaterials } from "./butterbell-materials";
+import type { ButterbellMaterials } from "./butterbell-materials";
+import { butterbellBarn, butterbellHay, butterbellWindmill } from "./butterbell-farm";
+import { butterbellExposedGround } from "./butterbell-ground";
 
-export interface StudyWorld {
-  casters: Mesh[];
-  animate(time: number): void;
+export interface StudyWorld extends CourseWorld {}
+
+function surfaceMesh(art: Atelier, name: string, positions: number[], indices: number[],
+  material: ButterbellMaterials[keyof ButterbellMaterials], colors?: number[], uv?: number[]): Mesh {
+  // Tight inside offsets can fold a strip triangle without changing its physical vertex positions.
+  for (let i = 0; i < indices.length; i += 3) {
+    const a = indices[i] * 3, b = indices[i + 1] * 3, c = indices[i + 2] * 3;
+    const up = (positions[a + 2] - positions[b + 2]) * (positions[c] - positions[b])
+      - (positions[a] - positions[b]) * (positions[c + 2] - positions[b + 2]);
+    if (up < 0) [indices[i + 1], indices[i + 2]] = [indices[i + 2], indices[i + 1]];
+  }
+  const mesh = art.mesh(name, positions, indices, colors, uv);
+  mesh.material = material;
+  mesh.receiveShadows = true;
+  return mesh;
 }
 
-function noise(index: number): number {
-  const value = Math.sin(index * 127.1 + 311.7) * 43758.5453;
-  return value - Math.floor(value);
-}
-
-function tree(art: Atelier, x: number, z: number, scale: number, seed: number): void {
-  const y = terrainHeight(x, z);
-  art.cylinder("orchard trunk", [x, y + 1.7 * scale, z], 0.32 * scale, 0.52 * scale, 3.4 * scale, "#9d7952");
-  const colors = ["#7cab50", "#9dbc61", "#5c9868"];
-  for (const side of [-1, 1]) {
-    art.tube("orchard fork", [[x, y + 2.1 * scale, z], [x + side * 0.75 * scale, y + 3 * scale, z], [x + side * 1.6 * scale, y + 3.6 * scale, z]], 0.13 * scale, "#9d7952");
-  }
-  art.oval("leaf crown", [x, y + 4.5 * scale, z], [5.5 * scale, 3.9 * scale, 4.9 * scale], colors[seed % colors.length], undefined, 1, 10);
-  art.oval("leaf crown", [x + 1.85 * scale, y + 3.8 * scale, z + 0.3], [3.9 * scale, 3.1 * scale, 3.7 * scale], colors[(seed + 1) % colors.length], undefined, 1, 10);
-  art.oval("leaf crown", [x - 1.5 * scale, y + 3.9 * scale, z + scale], [3.5 * scale, 3.3 * scale, 3.8 * scale], colors[seed % colors.length], undefined, 1, 10);
-  for (let i = 0; i < 6; i++) {
-    const angle = i / 6 * Math.PI * 2 + seed;
-    const px = x + Math.sin(angle) * 2.1 * scale;
-    const pz = z + Math.cos(angle) * 2.1 * scale;
-    const py = y + (3.2 + noise(seed + i) * 0.7) * scale;
-    art.oval("orchard fruit", [px, py, pz], [0.44 * scale, 0.48 * scale, 0.44 * scale], i % 2 ? "#ef7949" : "#f3c368", undefined, 1, 6);
-  }
-}
-
-function barn(art: Atelier, x: number, z: number): void {
-  const y = terrainHeight(x, z);
-  const yard: number[] = [x + 2, y + 0.035, z - 2];
-  const yardIndices: number[] = [];
-  for (let i = 0; i <= 40; i++) {
-    const angle = i / 40 * Math.PI * 2;
-    const px = x + 2 + Math.cos(angle) * 16;
-    const pz = z - 2 + Math.sin(angle) * 12;
-    yard.push(px, terrainHeight(px, pz) + 0.035, pz);
-    if (i < 40) yardIndices.push(0, i + 2, i + 1);
-  }
-  const yardMesh = art.mesh("packed barnyard", yard, yardIndices);
-  yardMesh.material = art.material("#c9b485");
-  yardMesh.receiveShadows = true;
-  art.box("barn siding", [x, y + 3.6, z], [14, 7.2, 12], "#dc765a");
-  art.box("barn footing", [x, y + 0.25, z], [14.5, 0.5, 12.5], "#d9c4a0");
-  const roof = art.mesh("gambrel roof", [
-    x - 7.7, y + 7, z - 6.7, x - 4, y + 10.2, z - 6.7, x, y + 11.4, z - 6.7,
-    x + 4, y + 10.2, z - 6.7, x + 7.7, y + 7, z - 6.7,
-    x - 7.7, y + 7, z + 6.7, x - 4, y + 10.2, z + 6.7, x, y + 11.4, z + 6.7,
-    x + 4, y + 10.2, z + 6.7, x + 7.7, y + 7, z + 6.7,
-  ], [0, 5, 1, 1, 5, 6, 1, 6, 2, 2, 6, 7, 2, 7, 3, 3, 7, 8, 3, 8, 4, 4, 8, 9, 0, 1, 2, 0, 2, 3, 0, 3, 4, 5, 7, 6, 5, 8, 7, 5, 9, 8]);
-  art.place(roof, [0, 0, 0], art.material("#4d8190"));
-  for (const side of [-1, 1]) {
-    const face = z + side * 6.03;
-    art.box("barn door", [x, y + 2.35, face], [5.2, 4.7, 0.08], "#914f46");
-    art.box("door lintel", [x, y + 4.83, face + side * 0.06], [5.7, 0.26, 0.13], "#fff0cf");
-    for (const corner of [-1, 1]) {
-      art.box("door trim", [x + corner * 2.65, y + 2.35, face + side * 0.06], [0.25, 4.8, 0.13], "#fff0cf");
-      art.tube("cross brace", [[x - 2.4, y + (corner < 0 ? 0.3 : 4.5), face + side * 0.11], [x + 2.4, y + (corner < 0 ? 4.5 : 0.3), face + side * 0.11]], 0.105, "#f3d6af");
+function farmland(art: Atelier, materials: ButterbellMaterials): void {
+  const tiles = 6, steps = 20;
+  for (let tz = 0; tz < tiles; tz++) for (let tx = 0; tx < tiles; tx++) {
+    const positions: number[] = [], colors: number[] = [], indices: number[] = [], uv: number[] = [];
+    const vertices = new Map<string, number>();
+    const vertex = (px: number, pz: number) => {
+      const key = `${px.toFixed(7)}:${pz.toFixed(7)}`;
+      let index = vertices.get(key);
+      if (index === undefined) {
+        index = positions.length / 3;
+        vertices.set(key, index);
+        positions.push(px, terrainHeight(px, pz), pz);
+        colors.push(...butterbellFieldColor(px, pz), 1);
+        uv.push(px / 5, pz / 5);
+      }
+      return index;
+    };
+    for (let z = 0; z < steps; z++) for (let x = 0; x < steps; x++) {
+      const px = -240 + (tx + x / steps) * 480 / tiles, ex = px + 480 / tiles / steps;
+      const pz = -250 + (tz + z / steps) * 500 / tiles, ez = pz + 500 / tiles / steps;
+      for (const triangle of [[[px, pz], [ex, pz], [px, ez]], [[ex, pz], [ex, ez], [px, ez]]] as const) {
+        for (const polygon of butterbellExposedGround([...triangle])) for (let corner = 1; corner < polygon.length - 1; corner++) {
+          const [a, b, c] = [polygon[0], polygon[corner], polygon[corner + 1]];
+          if (Math.abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])) < 1e-7) continue;
+          indices.push(vertex(...a), vertex(...b), vertex(...c));
+        }
+      }
     }
-    art.oval("loft window rim", [x, y + 7.75, face], [1.9, 1.9, 0.14], "#ffe9bd");
-    art.oval("loft window", [x, y + 7.75, face + side * 0.11], [1.45, 1.45, 0.1], "#416879");
-  }
-  for (let i = -6; i <= 6; i++) {
-    for (const side of [-1, 1]) art.box("siding join", [x + i, y + 3.4, z + side * 6.06], [0.045, 6.5, 0.025], "#e9926d");
-  }
-  art.cylinder("silo", [x + 11, y + 5, z + 1], 5, 5.4, 10, "#f0dcad");
-  art.oval("silo roof", [x + 11, y + 10, z + 1], [5.5, 2.5, 5.5], "#5a8892");
-  for (let i = 0; i < 5; i++) art.cylinder("silo ring", [x + 11, y + i * 2 + 0.5, z + 1], 5.5, 5.5, 0.09, "#bba983");
-  for (const side of [-1, 1]) {
-    art.box("barn corner trim", [x + side * 6.86, y + 3.5, z - 6.08], [0.2, 7, 0.15], "#fff0cf");
-    const shutter = art.box("side loft shutter", [x + side * 7.04, y + 4.3, z + 1], [0.1, 2.2, 1.8], "#416879");
-    shutter.receiveShadows = true;
+    surfaceMesh(art, `butterbell living pasture ${tx}:${tz}`, positions, indices, materials.pasture, colors, uv);
   }
 }
 
-function roadsideSign(art: Atelier, text: string, u: number, side: number, width = 5): void {
-  const point = sampleRoad(u);
-  const x = point.x + point.dz * side * 9.4;
-  const z = point.z - point.dx * side * 9.4;
-  const y = surfaceHeight(x, z);
-  art.cylinder("route signpost", [x, y + 1.5, z], 0.2, 0.25, 3, "#977756");
-  const board = art.sign("route: " + text, text, [x, y + 3, z], width);
-  board.rotation.y = Math.atan2(point.dx, point.dz);
+function raceway(art: Atelier, scenery: ButterbellArt, materials: ButterbellMaterials): Mesh[] {
+  const casters: Mesh[] = [];
+  const cream = Color3.FromHexString(C.cream), red = Color3.FromHexString(C.dairy);
+  for (let chunk = 0; chunk < ROAD.length - 1; chunk += 40) {
+    const road: number[] = [], roadIndices: number[] = [], roadUV: number[] = [];
+    const curbs: number[] = [], curbIndices: number[] = [], curbColors: number[] = [];
+    const banks: number[] = [], bankIndices: number[] = [], bankColors: number[] = [], bankUV: number[] = [];
+    const verges: number[] = [], vergeIndices: number[] = [], vergeUV: number[] = [];
+    for (let i = chunk; i < Math.min(chunk + 40, ROAD.length - 1); i++) {
+      const a = ROAD[i], b = ROAD[i + 1];
+      if (isGap((a.u + b.u) / 2)) continue;
+      const base = road.length / 3;
+      for (const point of [a, b]) for (const side of [-1, 1]) {
+        road.push(point.x + point.dz * side * ROAD_WIDTH / 2, point.y + .02, point.z - point.dx * side * ROAD_WIDTH / 2);
+        roadUV.push(side < 0 ? 0 : 2.6, point.distance / 5);
+      }
+      roadIndices.push(base, base + 1, base + 2, base + 1, base + 3, base + 2);
+      for (const side of [-1, 1]) {
+        const curb = curbs.length / 3, color = Math.floor(a.distance / 3) % 2 ? cream : red;
+        const widths = side < 0 ? [-SHOULDER_WIDTH, -ROAD_WIDTH / 2] : [ROAD_WIDTH / 2, SHOULDER_WIDTH];
+        for (const point of [a, b]) for (const width of widths) {
+          curbs.push(point.x + point.dz * width, point.y + .025, point.z - point.dx * width);
+          curbColors.push(color.r, color.g, color.b, 1);
+        }
+        curbIndices.push(curb, curb + 1, curb + 2, curb + 1, curb + 3, curb + 2);
+        const bank = banks.length / 3, bankSteps = 8;
+        for (const point of [a, b]) for (let step = 0; step <= bankSteps; step++) {
+          const width = SHOULDER_WIDTH + bankWidth(point) * step / bankSteps;
+          const x = point.x + point.dz * side * width, z = point.z - point.dx * side * width;
+          banks.push(x, bankHeight(point, x, z, width) + .008, z);
+          bankColors.push(...butterbellFieldColor(x, z), 1);
+          bankUV.push(x / 5, z / 5);
+        }
+        for (let step = 0; step < bankSteps; step++) {
+          const n = bank + step, next = n + bankSteps + 1;
+          if (side > 0) bankIndices.push(n, n + 1, next, n + 1, next + 1, next);
+          else bankIndices.push(n, next, n + 1, n + 1, next, next + 1);
+        }
+        const verge = verges.length / 3;
+        for (const point of [a, b]) for (let step = 0; step <= 3; step++) {
+          const width = SHOULDER_WIDTH + step * .62;
+          const x = point.x + point.dz * side * width, z = point.z - point.dx * side * width;
+          verges.push(x, bankHeight(point, x, z, width) + .014, z);
+          vergeUV.push(step * .4, point.distance / 3);
+        }
+        for (let step = 0; step < 3; step++) {
+          const n = verge + step, next = n + 4;
+          if (side > 0) vergeIndices.push(n, n + 1, next, n + 1, next + 1, next);
+          else vergeIndices.push(n, next, n + 1, n + 1, next, next + 1);
+        }
+      }
+      if (hasRail(a.u) && i % 4 === 0) {
+        const end = ROAD[Math.min(i + 4, ROAD.length - 1)];
+        for (const side of [-1, 1]) {
+          const x = a.x + a.dz * side * ROAD_WIDTH / 2, z = a.z - a.dx * side * ROAD_WIDTH / 2;
+          scenery.box("ridge guardrail stanchion", [x, a.y + .5, z], [.17, 1, .17], C.roofShadow, "metal");
+          for (const height of [.43, .88]) scenery.tube("ridge cream safety rail", [
+            [x, a.y + height, z],
+            [end.x + end.dz * side * ROAD_WIDTH / 2, end.y + height, end.z - end.dx * side * ROAD_WIDTH / 2],
+          ], .10, C.cream, "paint");
+        }
+      }
+    }
+    if (!road.length) continue;
+    casters.push(surfaceMesh(art, `butterbell aggregate raceway ${chunk}`, road, roadIndices, materials.asphalt, undefined, roadUV));
+    surfaceMesh(art, `butterbell enamel kerbs ${chunk}`, curbs, curbIndices, art.surface("#ffffff", "paint"), curbColors);
+    surfaceMesh(art, `butterbell physical banks ${chunk}`, banks, bankIndices, materials.pasture, bankColors, bankUV);
+    surfaceMesh(art, `butterbell packed verges ${chunk}`, verges, vergeIndices, materials.verge, undefined, vergeUV);
+  }
+  return casters;
+}
+
+function fieldDetails(art: ButterbellArt, materials: ButterbellMaterials): void {
+  for (let row = 0; row < 25; row++) {
+    const positions: number[] = [], indices: number[] = [], uv: number[] = [], colors: number[] = [];
+    for (let step = 0; step <= 28; step++) {
+      const x = -115 + step * 2.35;
+      const z = -122 + row * 2.25 + Math.sin(step * .07 + row * .025) * 5;
+      const p = projectRoad(x, z);
+      if (p.separation < SHOULDER_WIDTH + bankWidth(p) + 2) break;
+      for (const offset of [-.16, .16]) {
+        positions.push(x, surfaceHeight(x, z + offset) + .021, z + offset);
+        uv.push(x / 3, (z + offset) / 3);
+        colors.push(.93, .91, .71, 1);
+      }
+      if (step) {
+        const n = step * 2;
+        indices.push(n - 2, n, n - 1, n - 1, n, n + 1);
+      }
+    }
+    if (indices.length) art.mesh("contour-cut barley swath", positions, indices, materials.verge, colors, uv);
+  }
+  const clover = new Map<string, { positions: number[]; colors: number[]; indices: number[] }>();
+  for (let i = 0; i < 1000; i++) {
+    const p = sampleRoad(noise(i + 581)), side = i % 2 ? -1 : 1;
+    const across = SHOULDER_WIDTH + bankWidth(p) + 1 + noise(i + 88) * 11;
+    const x = p.x + p.dz * side * across, z = p.z - p.dx * side * across;
+    if (isWater(x, z) || isGap(p.u)) continue;
+    const y = surfaceHeight(x, z) + .025, radius = .10 + noise(i + 212) * .12;
+    const key = `${Math.floor(x / 64)}:${Math.floor(z / 64)}`;
+    let patch = clover.get(key);
+    if (!patch) {
+      patch = { positions: [], colors: [], indices: [] };
+      clover.set(key, patch);
+    }
+    const { positions, colors, indices } = patch;
+    const base = positions.length / 3, color = i % 9 === 0 ? C.cream : i % 9 === 1 ? C.straw : C.leaf;
+    const tint = Color3.FromHexString(color);
+    // Clover, mower clippings and buttercups sit below the kart's contact plane.
+    positions.push(x - radius, y, z, x + radius, y, z, x, y + .075, z + radius * .7,
+      x, y + .075, z + radius * .7, x + radius, y, z, x - radius, y, z);
+    for (let corner = 0; corner < 6; corner++) colors.push(tint.r, tint.g, tint.b, 1);
+    indices.push(base, base + 1, base + 2, base + 3, base + 4, base + 5);
+  }
+  for (const [key, { positions, colors, indices }] of clover) {
+    art.mesh(`low pasture clover ${key}`, positions, indices, art.art.material("#ffffff"), colors);
+  }
+  for (const line of [{ x: -17, start: -157, end: -52 }, { x: -109, start: -122, end: 74 }]) {
+    for (let z = line.start; z < line.end; z += 4.5) {
+      const x = line.x + Math.sin(z * .018) * 2, ex = line.x + Math.sin((z + 4.5) * .018) * 2;
+      if (!butterbellDecorationClearance(x, z, .3) || !butterbellDecorationClearance(ex, z + 4.5, .3)) continue;
+      const y = surfaceHeight(x, z), ey = surfaceHeight(ex, z + 4.5);
+      art.furniture.push({ name: "paddock fence", x, z, radius: .3 });
+      art.box("paddock mortised post", [x, y + .65, z], [.2, 1.3, .2], C.cream, "wood");
+      for (const height of [.42, .99]) art.tube("paddock painted rail", [[x, y + height, z], [ex, ey + height, z + 4.5]], .065, C.cream, "wood");
+    }
+  }
+}
+
+function horizon(art: Atelier): void {
+  for (let layer = 0; layer < 2; layer++) {
+    const positions: number[] = [], indices: number[] = [], colors: number[] = [];
+    const color = Color3.FromHexString(layer ? "#8dac84" : "#658965");
+    for (let row = 0; row < 3; row++) for (let i = 0; i <= 144; i++) {
+      const angle = i / 144 * Math.PI * 2;
+      const radius = 365 + layer * 125 + row * 60;
+      const peak = 29 + layer * 18 + Math.sin(angle * 5 + layer) * 11 + Math.cos(angle * 9) * 5;
+      positions.push(Math.cos(angle) * radius, row === 1 ? peak : -9, Math.sin(angle) * radius);
+      const tint = row === 1 ? 1.08 : .85;
+      colors.push(color.r * tint, color.g * tint, color.b * tint, 1);
+      if (row < 2 && i < 144) {
+        const a = row * 145 + i;
+        indices.push(a, a + 145, a + 1, a + 1, a + 145, a + 146);
+      }
+    }
+    const mesh = art.mesh(`butterbell distant valley ${layer}`, positions, indices, colors);
+    mesh.material = art.material("#ffffff");
+  }
+}
+
+function pond(art: Atelier, scenery: ButterbellArt): void {
+  const positions = [77, WATER_LEVEL, -14], indices: number[] = [];
+  for (let i = 0; i <= 72; i++) {
+    const angle = i / 72 * Math.PI * 2;
+    positions.push(77 + Math.cos(angle) * 36, WATER_LEVEL, -14 + Math.sin(angle) * 27);
+    if (i < 72) indices.push(0, i + 1, i + 2);
+  }
+  surfaceMesh(art, "butterbell irrigation water", positions, indices, art.surface("#4ca9ae", "paint"));
+  for (let i = 0; i < 18; i++) {
+    const x = 51 + noise(i + 30) * 51, z = -31 + noise(i + 50) * 32;
+    if (!isWater(x, z) || !isWater(x + 3, z)) continue;
+    scenery.box("irrigation water glint", [x, WATER_LEVEL + .012, z], [1.8 + noise(i) * 2, .008, .06], "#9dd4ce");
+  }
+}
+
+function routeSign(art: ButterbellArt, text: ButterbellSign, u: number, side: number, width = 5.2): void {
+  const p = sampleRoad(u), radius = width / 2 + .2;
+  let across = SHOULDER_WIDTH + bankWidth(p) + 3 + radius;
+  let x = p.x + p.dz * side * across, z = p.z - p.dx * side * across;
+  for (let step = 0; step < 10 && !butterbellDecorationClearance(x, z, radius); step++) {
+    across += 2;
+    x = p.x + p.dz * side * across; z = p.z - p.dx * side * across;
+  }
+  if (!butterbellDecorationClearance(x, z, radius)) return;
+  art.furniture.push({ name: text, x, z, radius });
+  const y = surfaceHeight(x, z), yaw = Math.atan2(p.dx, p.dz);
+  art.cylinder("enamel route post", [x, y + 1.65, z], .14, .18, 3.3, C.roofShadow, "metal");
+  const board = art.box("route nameboard", [x, y + 3.3, z], [width + .18, .95, .14], C.dairy, "paint");
+  board.rotation.y = yaw;
+  art.label(text, [x - p.dx * .09, y + 3.3, z - p.dz * .09], width, .76, yaw);
+}
+
+function raceFestival(art: ButterbellArt): void {
+  const start = sampleRoad(0), yaw = Math.atan2(start.dx, start.dz);
+  const at = (across: number, height: number, forward = 0): Triple =>
+    [start.x + start.dz * across + start.dx * forward, start.y + height, start.z - start.dx * across + start.dz * forward];
+  for (let row = 0; row < 3; row++) for (let col = 0; col < 12; col++) {
+    const tile = art.box("start checker", at((col - 5.5) * ROAD_WIDTH / 12, .04, row * .8 - .8),
+      [ROAD_WIDTH / 12, .02, .8], (row + col) % 2 ? C.iron : C.cream, "paint");
+    tile.rotation.y = yaw;
+  }
+  for (const side of [-1, 1]) {
+    const [x, , z] = at(side * 14.8, 0);
+    const ground = surfaceHeight(x, z);
+    art.furniture.push({ name: "festival gate pier", x, z, radius: Math.SQRT2 * .85 });
+    const plinth = art.box("dairy gate stone plinth", [x, ground + .28, z], [1.7, .56, 1.7], "#c0b393");
+    plinth.rotation.y = yaw;
+    const post = art.box("dairy gate enamel pier", [x, (ground + start.y + 7.5) / 2, z], [1.1, start.y + 7.5 - ground, 1.1], C.dairy, "paint");
+    post.rotation.y = yaw;
+    for (const edge of [-1, 1]) {
+      const trim = art.box("gate cream corner", at(side * 14.8 + edge * .48, 3.9, -.59), [.12, 6.9, .12], C.cream, "paint");
+      trim.rotation.y = yaw;
+    }
+    art.cylinder("gate pier crown", at(side * 14.8, 7.67), 1.65, 1.65, .3, C.cream, "paint");
+    art.cylinder("gate pier finial", at(side * 14.8, 8.04), .05, 1.8, .5, C.roof, "paint");
+  }
+  art.tube("festival double-span truss", [at(-14.8, 7.35), at(-8, 7.8), at(0, 8.9), at(8, 7.8), at(14.8, 7.35)], .18, C.roof, "paint");
+  art.tube("festival lower truss", [at(-14.8, 6.95), at(14.8, 6.95)], .13, C.roofShadow, "metal");
+  for (let i = -6; i < 7; i++) {
+    art.tube("festival diagonal truss", [at(i * 2, 7.04), at(i * 2 + 1, 7.62 + (1 - Math.abs(i) / 7) * .65)], .045, C.roofShadow, "metal");
+  }
+  const backing = art.box("Butterbell nameplate border", at(0, 8), [12.9, 1.93, .28], C.dairy, "paint");
+  backing.rotation.y = yaw;
+  art.label("BUTTERBELL", at(0, 8, -.16), 12.55, 1.67, yaw);
+  art.label("DAIRY ROAD RACES", at(0, 6.71, -.03), 7.3, .57, yaw);
+  art.cylinder("Butterbell bell shoulder", at(0, 9.76), .42, 1.28, 1.16, C.straw, "metal");
+  art.cylinder("Butterbell bell lip", at(0, 9.19), 1.5, 1.5, .15, C.straw, "metal");
+  art.cylinder("Butterbell bell crown", at(0, 10.4), .14, .32, .16, C.roofShadow, "metal");
+  for (const side of [-1, 1]) {
+    const pos = at(side * 9.4, 7.03, -.04);
+    art.label("PASTURES", pos, 4.1, .62, yaw);
+  }
+  const launch = sampleRoad(GAP_START - .006);
+  for (let i = 0; i < 4; i++) {
+    const p = sampleRoad(GAP_START - .005 - i * .006);
+    const stripe = art.box("launch stripes", [p.x, p.y + .045, p.z], [ROAD_WIDTH - 1, .035, .55], i % 2 ? C.roof : C.straw, "paint");
+    stripe.rotation.y = Math.atan2(p.dx, p.dz);
+  }
+  for (const side of [-1, 1]) {
+    const x = launch.x + launch.dz * side * 7.2, z = launch.z - launch.dx * side * 7.2;
+    // Flight masts retain the canonical shoulder positions and sit outside the launch lane.
+    art.cylinder("flight pennant pole", [x, launch.y + 2.5, z], .13, .13, 5, C.cream, "paint");
+    const flag = art.box("flight pennant", [x, launch.y + 4.3, z], [1.2, 1, .06], C.straw, "fabric");
+    flag.rotation.y = Math.atan2(launch.dx, launch.dz);
+    for (let i = 0; i < 5; i++) {
+      const p = sampleRoad(GAP_END + .005 + i * .008);
+      const marker = art.box("landing edge", [p.x + p.dz * side * 6.2, p.y + .05, p.z - p.dx * side * 6.2], [.45, .03, 2.5], C.cream, "paint");
+      marker.rotation.y = Math.atan2(p.dx, p.dz);
+    }
+  }
+  routeSign(art, "ORCHARD BEND", .115, 1);
+  routeSign(art, "BARN BEND", .27, -1);
+  routeSign(art, "WINDMILL RIDGE", .46, -1, 6);
+  routeSign(art, "GLIDE AHEAD", GAP_START - .055, 1);
+  routeSign(art, "LANDING", GAP_END + .018, -1);
+  routeSign(art, "ROLLING HARVEST", .153, -1, 6);
+  routeSign(art, "ROLLING HARVEST", .838, 1, 6);
+}
+
+const HARVEST_POINTS: readonly RoadPoint[] = [sampleRoad(.18), sampleRoad(.865)];
+/** Mirrors the canonical hazard equation without creating query arrays every render frame. */
+export function updateButterbellHarvest(roots: readonly TransformNode[], time: number): void {
+  for (let index = 0; index < HARVEST_POINTS.length; index++) {
+    const p = HARVEST_POINTS[index], root = roots[index];
+    const phase = Math.sin(time * Math.PI * 2 / 7 + index);
+    const lane = (index ? -1 : 1) * (4.9 + phase * 1.1);
+    root.position.set(p.x + p.dz * lane, p.y + .95, p.z - p.dx * lane);
+    root.rotation.set(0, Math.atan2(p.dx, p.dz), phase);
+  }
 }
 
 export function makeWorld(art: Atelier): StudyWorld {
-  const scene = art.scene;
-  const groundPositions: number[] = [];
-  const groundColors: number[] = [];
-  const groundIndices: number[] = [];
-  const fieldColors = ["#9fbb68", "#b5c67b", "#90b567", "#c0c676", "#86ab63"].map(hex => Color3.FromHexString(hex));
-  const fieldColor = (x: number, z: number) => fieldColors[Math.abs(Math.floor(x / 43) + Math.floor(z / 48) * 7) % fieldColors.length];
-  const divisions = 110;
-  for (let z = 0; z <= divisions; z++) {
-    for (let x = 0; x <= divisions; x++) {
-      const px = (x / divisions - 0.5) * 480;
-      const pz = (z / divisions - 0.5) * 500;
-      const py = terrainHeight(px, pz);
-      groundPositions.push(px, py, pz);
-      const color = fieldColor(px, pz).scale(0.95 + noise(x + z * 13) * 0.09);
-      groundColors.push(color.r, color.g, color.b, 1);
-      if (x < divisions && z < divisions) {
-        const a = z * (divisions + 1) + x;
-        groundIndices.push(a, a + 1, a + divisions + 1, a + 1, a + divisions + 2, a + divisions + 1);
-      }
-    }
-  }
-  const terrain = art.mesh("quilted farmland", groundPositions, groundIndices, groundColors);
-  terrain.material = art.material("#ffffff");
-  terrain.receiveShadows = true;
-
-  const asphalt = new DynamicTexture("original road surface", { width: 128, height: 512 }, scene, false);
-  const context = asphalt.getContext();
-  context.fillStyle = "#d7cfb0";
-  context.fillRect(0, 0, 128, 512);
-  for (let i = 0; i < 2600; i++) {
-    context.fillStyle = i % 2 ? "#c9c3a844" : "#eee4c633";
-    context.fillRect(noise(i) * 128, noise(i + 6000) * 512, 1.3, 1.3);
-  }
-  context.fillStyle = "#fff1c1";
-  context.fillRect(61, 20, 6, 125);
-  context.fillRect(61, 275, 6, 125);
-  asphalt.update();
-  asphalt.anisotropicFilteringLevel = 4;
-  const roadMaterial = new StandardMaterial("warm asphalt", scene);
-  roadMaterial.diffuseTexture = asphalt;
-  roadMaterial.specularColor = new Color3(0.03, 0.03, 0.03);
-  const positions: number[] = [];
-  const indices: number[] = [];
-  const uv: number[] = [];
-  const curbPositions: number[] = [];
-  const curbIndices: number[] = [];
-  const curbColors: number[] = [];
-  const banks: number[] = [];
-  const bankIndices: number[] = [];
-  const bankColors: number[] = [];
-  for (let i = 0; i < ROAD.length - 1; i++) {
-    const a = ROAD[i];
-    const b = ROAD[i + 1];
-    if (isGap((a.u + b.u) / 2)) continue;
-    const base = positions.length / 3;
-    for (const point of [a, b]) {
-      for (const side of [-1, 1]) {
-        positions.push(point.x + point.dz * side * ROAD_WIDTH / 2, point.y + 0.02, point.z - point.dx * side * ROAD_WIDTH / 2);
-        uv.push(side < 0 ? 0 : 1, point.distance / 17);
-      }
-    }
-    indices.push(base, base + 1, base + 2, base + 1, base + 3, base + 2);
+  const materials = makeButterbellMaterials(art), scenery = new ButterbellArt(art);
+  farmland(art, materials);
+  const roadCasters = raceway(art, scenery, materials);
+  fieldDetails(scenery, materials);
+  for (const item of ORCHARD) butterbellTree(scenery, item.x, item.z, item.scale, item.seed);
+  for (const farm of BARNS) butterbellBarn(scenery, materials, farm.x, farm.z);
+  for (const bale of HAY_BALES) butterbellHay(scenery, materials, bale.x, bale.z);
+  const rotor = butterbellWindmill(scenery);
+  pond(art, scenery);
+  horizon(art);
+  raceFestival(scenery);
+  const rollers = HARVEST_POINTS.map((_, index) => {
+    const root = new TransformNode(`hay-roller-${index}`, art.scene);
+    const body = scenery.cylinder("rolling harvest bale", [0, 0, 0], 2.2, 2.2, 1.9, C.straw, "matte", root);
+    body.material = materials.hay;
+    body.rotation.z = Math.PI / 2;
     for (const side of [-1, 1]) {
-      const curbBase = curbPositions.length / 3;
-      const curbColor = Color4.FromHexString(i % 8 < 4 ? "#f4e7bdff" : "#e49570ff");
-      for (const point of [a, b]) {
-        for (const width of [ROAD_WIDTH / 2, ROAD_WIDTH / 2 + 0.6]) {
-          curbPositions.push(point.x + point.dz * side * width, point.y + 0.025, point.z - point.dx * side * width);
-          curbColors.push(curbColor.r, curbColor.g, curbColor.b, 1);
-        }
+      scenery.cylinder("harvest cloth ribbon", [side * .53, 0, 0], 2.23, 2.23, .15, C.roof, "fabric", root).rotation.z = Math.PI / 2;
+      const spiral: Triple[] = [];
+      for (let i = 0; i <= 48; i++) {
+        const angle = i / 48 * Math.PI * 5, radius = .08 + i / 48 * .87;
+        spiral.push([side * .965, Math.cos(angle) * radius, Math.sin(angle) * radius]);
       }
-      if (side > 0) curbIndices.push(curbBase, curbBase + 1, curbBase + 2, curbBase + 1, curbBase + 3, curbBase + 2);
-      else curbIndices.push(curbBase, curbBase + 2, curbBase + 1, curbBase + 1, curbBase + 2, curbBase + 3);
-      const bankBase = banks.length / 3;
-      const bankSteps = 6;
-      for (const point of [a, b]) {
-        for (let step = 0; step <= bankSteps; step++) {
-          const width = SHOULDER_WIDTH + bankWidth(point) * step / bankSteps;
-          const x = point.x + point.dz * side * width;
-          const z = point.z - point.dx * side * width;
-          banks.push(x, bankHeight(point, x, z, width) + 0.008, z);
-          const color = fieldColor(x, z);
-          bankColors.push(color.r, color.g, color.b, 1);
-        }
-      }
-      for (let step = 0; step < bankSteps; step++) {
-        const first = bankBase + step;
-        const next = first + bankSteps + 1;
-        if (side > 0) bankIndices.push(first, first + 1, next, first + 1, next + 1, next);
-        else bankIndices.push(first, next, first + 1, first + 1, next, next + 1);
-      }
-    }
-    if (hasRail(a.u) && i % 4 === 0) {
-      const end = ROAD[Math.min(i + 4, ROAD.length - 1)];
-      for (const side of [-1, 1]) {
-        const x = a.x + a.dz * side * ROAD_WIDTH / 2;
-        const z = a.z - a.dx * side * ROAD_WIDTH / 2;
-        art.box("ridge rail post", [x, a.y + 0.5, z], [0.19, 1, 0.19], "#f5e7c1");
-        art.tube("ridge rail", [[x, a.y + 0.8, z], [end.x + end.dz * side * ROAD_WIDTH / 2, end.y + 0.8, end.z - end.dx * side * ROAD_WIDTH / 2]], 0.13, i % 8 ? "#78b9a1" : "#f5e7c1");
-      }
-    }
-  }
-  const roadMesh = art.mesh("study road", positions, indices, undefined, uv);
-  roadMesh.material = roadMaterial;
-  roadMesh.receiveShadows = true;
-  roadMaterial.backFaceCulling = false;
-  const curbs = art.mesh("painted edge markers", curbPositions, curbIndices, curbColors);
-  const curbMaterial = art.material("#fffffe");
-  curbMaterial.backFaceCulling = false;
-  curbs.material = curbMaterial;
-  curbs.receiveShadows = true;
-  const bankMesh = art.mesh("grassy road banks", banks, bankIndices, bankColors);
-  const bankMaterial = art.material("#ffffff");
-  bankMaterial.backFaceCulling = false;
-  bankMesh.material = bankMaterial;
-  bankMesh.receiveShadows = true;
-
-  const water = art.oval("irrigation reservoir", [77, WATER_LEVEL, -14], [72, 0.08, 54], "#62b6bb");
-  water.material = art.material("#62b6bb");
-  for (let i = 0; i < 12; i++) {
-    const x = 53 + noise(i + 30) * 44;
-    const z = -28 + noise(i + 50) * 27;
-    art.box("water glint", [x, WATER_LEVEL + 0.06, z], [2.5 + noise(i) * 3, 0.01, 0.12], "#b6dfce");
-  }
-  for (const item of ORCHARD) tree(art, item.x, item.z, item.scale, item.seed);
-  for (let row = 0; row < 7; row++) {
-    for (let column = 0; column < 9; column++) {
-      const x = -92 + column * 4.6;
-      const z = -106 + row * 6;
-      const y = terrainHeight(x, z);
-      art.oval("barley row", [x, y + 0.65, z], [0.65, 1.35, 4.3], row % 2 ? "#d1c881" : "#c5bc76");
-    }
-  }
-  for (const farm of BARNS) {
-    barn(art, farm.x, farm.z);
-    art.sign("farm sign", "BUTTERBELL", [farm.x, terrainHeight(farm.x, farm.z) + 6, farm.z - 6.15], 9, "#3445a8", 1.2);
-  }
-  for (const bale of HAY_BALES) {
-    const y = terrainHeight(bale.x, bale.z) + 1.05;
-    art.cylinder("rolled hay", [bale.x, y, bale.z], 2.1, 2.1, 1.8, "#e3bf67").rotation.x = Math.PI / 2;
-    for (const side of [-1, 1]) {
-      art.cylinder("bale binding", [bale.x, y, bale.z + side * 0.6], 2.12, 2.12, 0.09, "#ab874c").rotation.x = Math.PI / 2;
-      for (const radius of [0.35, 0.7]) {
-        art.tube("cut hay rings", Array.from({ length: 25 }, (_, i): Triple => [
-          bale.x + Math.sin(i / 24 * Math.PI * 2) * radius, y + Math.cos(i / 24 * Math.PI * 2) * radius, bale.z + side * 0.91,
-        ]), 0.025, "#ab874c");
-      }
-    }
-  }
-  roadsideSign(art, "ORCHARD BEND", 0.115, 1, 5.5);
-  roadsideSign(art, "BARN BEND", 0.27, -1);
-  roadsideSign(art, "WINDMILL RIDGE", 0.46, -1, 6);
-  roadsideSign(art, "GLIDE AHEAD", GAP_START - 0.055, 1, 5.5);
-  for (const u of [0.065, 0.13, 0.21, 0.29, 0.355, 0.78, 0.88, 0.94]) {
-    for (let flower = 0; flower < 10; flower++) {
-      const p = sampleRoad(u + noise(flower) * 0.015);
-      const side = flower % 2 ? -1 : 1;
-      const across = 8.2 + noise(flower + 40) * 2.5;
-      const x = p.x + p.dz * side * across;
-      const z = p.z - p.dx * side * across;
-      const y = surfaceHeight(x, z);
-      art.cylinder("butterbell stem", [x, y + 0.2, z], 0.035, 0.055, 0.4, "#5c9868");
-      art.cylinder("butterbell bloom", [x, y + 0.49, z], 0.31, 0.08, 0.27, flower % 3 ? "#f3c368" : "#fff0cf");
-    }
-  }
-
-  for (let i = 0; i < 24; i++) {
-    const x = -12;
-    const z = -151 + i * 4.5;
-    const y = terrainHeight(x, z);
-    if (projectRoad(x, z).separation < 9) continue;
-    art.box("paddock fence post", [x, y + 0.7, z], [0.22, 1.4, 0.22], "#f4e7c2");
-    for (const height of [0.4, 0.95]) art.box("paddock fence rail", [x, y + height, z + 2.1], [0.15, 0.14, 4.4], "#f4e7c2");
-  }
-  for (let i = 0; i < 14; i++) {
-    const angle = i / 14 * Math.PI * 2;
-    const x = 45 + Math.cos(angle) * 300;
-    const z = Math.sin(angle) * 300;
-    art.oval("distant rolling hill", [x, -8, z], [125 + noise(i) * 60, 48 + noise(i + 9) * 55, 140], i % 2 ? "#8eb698" : "#a0bca0");
-  }
-  for (let i = 0; i < 18; i++) {
-    const x = -240 + noise(i + 130) * 520;
-    const z = -245 + noise(i + 300) * 490;
-    const y = 65 + noise(i + 660) * 18;
-    for (let puff = 0; puff < 3; puff++) {
-      art.oval("cloud", [x + puff * 9, y + (puff % 2) * 2.5, z], [22, 8 + puff * 2, 12], "#fff6da");
-    }
-  }
-
-  const start = sampleRoad(0);
-  const startYaw = Math.atan2(start.dx, start.dz);
-  for (let row = 0; row < 3; row++) {
-    for (let col = 0; col < 12; col++) {
-      const across = (col - 5.5) * (ROAD_WIDTH / 12);
-      const forward = row * 0.8 - 0.8;
-      const tile = art.box("start checker", [start.x + start.dz * across + start.dx * forward, start.y + 0.04, start.z - start.dx * across + start.dz * forward], [ROAD_WIDTH / 12, 0.02, 0.8], (row + col) % 2 ? "#4b6382" : "#fff0bf");
-      tile.rotation.y = startYaw;
-    }
-  }
-  for (const side of [-1, 1]) {
-    art.cylinder("start gate post", [start.x + start.dz * side * 8, start.y + 4, start.z - start.dx * side * 8], 0.48, 0.65, 8, "#f3c368");
-  }
-  art.tube("start gate arch", [
-    [start.x - start.dz * 8, start.y + 7.8, start.z + start.dx * 8],
-    [start.x, start.y + 9.4, start.z],
-    [start.x + start.dz * 8, start.y + 7.8, start.z - start.dx * 8],
-  ], 0.24, "#5b9b9b");
-  const gateSign = art.sign("start wordmark", "KARTSICK", [start.x, start.y + 8.1, start.z], 11.5, "#3445a8", 2);
-  gateSign.rotation.y = startYaw;
-  const launch = sampleRoad(GAP_START - 0.006);
-  for (const side of [-1, 1]) {
-    const x = launch.x + launch.dz * side * 7.2;
-    const z = launch.z - launch.dx * side * 7.2;
-    art.cylinder("flight pennant pole", [x, launch.y + 2.5, z], 0.13, 0.13, 5, "#fff0c2");
-    const pennant = art.box("flight pennant", [x, launch.y + 4.3, z], [1.2, 1, 0.06], "#f5bf60");
-    pennant.rotation.y = Math.atan2(launch.dx, launch.dz);
-  }
-  const glideSign = art.sign("glide sign", "SPREAD YOUR WINGS", [launch.x + launch.dz * 10, launch.y + 3, launch.z - launch.dx * 10], 6, "#3445a8");
-  glideSign.rotation.y = Math.atan2(launch.dx, launch.dz);
-  for (let i = 0; i < 4; i++) {
-    const p = sampleRoad(GAP_START - 0.005 - i * 0.006);
-    const marker = art.box("launch stripes", [p.x, p.y + 0.045, p.z], [ROAD_WIDTH - 1, 0.035, 0.55], i % 2 ? "#5caaa0" : "#f5ce69");
-    marker.rotation.y = Math.atan2(p.dx, p.dz);
-  }
-  const landing = sampleRoad(GAP_END + 0.018);
-  const landingYaw = Math.atan2(landing.dx, landing.dz);
-  for (const side of [-1, 1]) {
-    const x = landing.x + landing.dz * side * 8;
-    const z = landing.z - landing.dx * side * 8;
-    art.cylinder("landing mast", [x, landing.y + 3, z], 0.24, 0.3, 6, "#f3c368");
-    const flag = art.sign("landing flag", "LANDING", [x, landing.y + 4.9, z], 3.6, "#3445a8", 0.95);
-    flag.rotation.y = landingYaw;
-    for (let i = 0; i < 5; i++) {
-      const point = sampleRoad(GAP_END + 0.005 + i * 0.008);
-      const marker = art.box("landing edge", [point.x + point.dz * side * 6.2, point.y + 0.05, point.z - point.dx * side * 6.2], [0.45, 0.03, 2.5], "#fff0cf");
-      marker.rotation.y = Math.atan2(point.dx, point.dz);
-    }
-  }
-
-  const millPosition: Triple = [WINDMILL.x, terrainHeight(WINDMILL.x, WINDMILL.z), WINDMILL.z];
-  art.cylinder("windmill tower", [millPosition[0], millPosition[1] + 9, millPosition[2]], 4, 7, 18, "#f3dfa7");
-  art.oval("windmill cap", [millPosition[0], millPosition[1] + 18, millPosition[2]], [6, 4, 6], "#dd825a");
-  const rotor = new TransformNode("windmill rotor", scene);
-  rotor.position.set(millPosition[0], millPosition[1] + 16, millPosition[2] - 3.2);
-  art.oval("windmill hub", [0, 0, 0], [1.2, 1.2, 1.2], "#537a84", rotor);
-  for (let i = 0; i < 4; i++) {
-    const blade = new TransformNode("windmill blade", scene);
-    blade.parent = rotor;
-    blade.rotation.z = i * Math.PI / 2;
-    art.box("blade spar", [0, 4.2, 0], [0.18, 8.4, 0.18], "#977756", blade);
-    art.box("cream sail", [0.7, 4.5, 0], [1.5, 5.6, 0.1], "#fff1cd", blade);
-    for (let rung = 0; rung < 5; rung++) art.box("sail rib", [0.7, 2.3 + rung * 1.1, -0.07], [1.6, 0.09, 0.06], "#c6aa79", blade);
-  }
-  art.batchModel(rotor, new Set());
-  const hayRollers = butterbellHazards(0).map((hazard, index) => {
-    const root = new TransformNode(hazard.id, scene);
-    const bale = art.cylinder("rolling harvest bale", [0, 0, 0], 2.2, 2.2, 1.9, "#eab54e", root);
-    bale.rotation.z = Math.PI / 2;
-    for (const side of [-1, 1]) {
-      const ring = art.cylinder("harvest ribbon", [side * .53, 0, 0], 2.23, 2.23, .15, "#6b9c8a", root);
-      ring.rotation.z = Math.PI / 2;
-      const cap = art.oval("bale end", [side * .965, 0, 0], [.05, 1.85, 1.85], "#f4d786", root, 1, 10);
-      cap.receiveShadows = true;
-      for (let n = 0; n < 3; n++) {
-        const end = art.cylinder("coiled hay", [side * .997, 0, 0], 1.4 - n * .4, 1.4 - n * .4, .022, n % 2 ? "#f4d786" : "#c68d40", root);
-        end.rotation.z = Math.PI / 2;
-      }
+      scenery.tube("rolling cut hay spiral", spiral, .03, "#a87937", "fabric", root);
     }
     art.batchModel(root, new Set(), true);
-    const u = index ? .865 : .18;
-    roadsideSign(art, "ROLLING HARVEST", u - .027, index ? 1 : -1, 5.5);
     return root;
   });
-  for (let i = 0; i < 28; i++) {
-    const x = -105 + Math.sin(i * 2.3) * 34;
-    const z = -110 + i * 10;
-    tree(art, x, z, 1.1 + noise(i + 800) * .9, i);
-  }
-  const scenery = art.finishStatic();
-  const nonCastingColors = ["#fff6da", "#8eb698", "#a0bca0", "#62b6bb", "#b6dfce"];
+  updateButterbellHarvest(rollers, 0);
+  const staticCasters = scenery.finish();
+  const meshes = (root: TransformNode) => root.getChildMeshes().filter((mesh): mesh is Mesh => mesh instanceof Mesh);
+  art.scene.metadata = { ...art.scene.metadata, butterbellFurniture: scenery.furniture };
   return {
-    casters: [...scenery.filter(mesh => !nonCastingColors.some(color => mesh.material?.name.startsWith(color))),
-      ...rotor.getChildMeshes().filter((mesh): mesh is Mesh => mesh instanceof Mesh),
-      ...hayRollers.flatMap(root => root.getChildMeshes().filter((mesh): mesh is Mesh => mesh instanceof Mesh))],
-    animate(time) {
-      rotor.rotation.z = time * 0.24;
-      butterbellHazards(time).forEach((hazard, index) => {
-        const root = hayRollers[index], p = sampleRoad(index ? .865 : .18);
-        root.position.set(hazard.x, hazard.y, hazard.z);
-        root.rotation.set(0, Math.atan2(p.dx, p.dz), Math.sin(time * Math.PI * 2 / 7 + index));
-      });
+    environment: {
+      sky: "#69bed9", skyStyle: "day", fogStart: 240, fogEnd: 680, sun: "#fff0ce", sunIntensity: 1.15,
+      fill: "#d5eaff", fillIntensity: .78, ground: "#566a3e",
+    },
+    casters: [...roadCasters, ...staticCasters, ...meshes(rotor), ...rollers.flatMap(meshes)],
+    animate(time, reducedMotion = false) {
+      rotor.rotation.z = reducedMotion ? .22 : time * .24;
+      updateButterbellHarvest(rollers, time);
     },
   };
 }

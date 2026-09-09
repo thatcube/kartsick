@@ -12,6 +12,7 @@ import type { KartBuild } from "@kartsick/content";
 import { createKart, NEUTRAL } from "@kartsick/simulation";
 import { Atelier } from "./geometry";
 import { makeKart } from "./kart";
+import { RIDER_GRIPS } from "./characters/rig";
 
 it("batches the original kart and characters without losing vertex attributes or rig ownership", () => {
   const engine = new NullEngine();
@@ -68,8 +69,8 @@ describe("complete approved asset roster", () => {
         paint: "original", decal: "chevrons",
       };
       const model = makeKart(art, build);
-      expect(model.meshes.length).toBeLessThanOrEqual(35);
-      expect(model.meshes.reduce((sum, mesh) => sum + mesh.getTotalVertices(), 0)).toBeLessThanOrEqual(100_000);
+      expect(model.meshes.length).toBeLessThanOrEqual(56);
+      expect(model.meshes.reduce((sum, mesh) => sum + mesh.getTotalVertices(), 0)).toBeLessThanOrEqual(70_000);
       for (const mesh of model.meshes) validMesh(mesh);
       expect(model.meshes.some(mesh => mesh.getVerticesData("color")?.some(value => value > 0 && value < 1))).toBe(true);
       expect(model.root.metadata.bodyId).toBe(body);
@@ -95,9 +96,10 @@ describe("complete approved asset roster", () => {
             for (const hand of hands) {
               hand.computeWorldMatrix(true);
               const world = hand.getAbsolutePosition();
-              expect(world.y).toBeCloseTo(front ? 1.13 : 1.02);
-              expect(world.z).toBeCloseTo(front ? 0.72 : -1.2);
-              expect(Math.abs(world.x)).toBeCloseTo(front ? 0.255 : 0.55);
+              const target = front ? RIDER_GRIPS.front : RIDER_GRIPS.rear;
+              expect(world.y).toBeCloseTo(target.y);
+              expect(world.z).toBeCloseTo(target.z);
+              expect(Math.abs(world.x)).toBeCloseTo(target.x);
             }
           }
           for (const time of [0.419, 0.21, 0.001]) {
@@ -193,9 +195,29 @@ describe("complete approved asset roster", () => {
         for (let i = 0; i < riders.length; i++) for (const hand of riders[i].getChildTransformNodes(true).filter(node => node.name === "gripping hand")) {
           hand.computeWorldMatrix(true);
           const world = hand.getAbsolutePosition();
-          expect(world.y).toBeCloseTo(i === 0 ? 1.13 : 1.02);
-          expect(world.z).toBeCloseTo(i === 0 ? 0.72 : -1.2);
-          expect(Math.abs(world.x)).toBeCloseTo(i === 0 ? 0.255 : 0.55);
+          const target = i === 0 ? RIDER_GRIPS.front : RIDER_GRIPS.rear;
+          expect(world.y).toBeCloseTo(target.y);
+          expect(world.z).toBeCloseTo(target.z);
+          expect(Math.abs(world.x)).toBeCloseTo(target.x);
+        }
+      }
+    });
+  });
+
+  it("turns the steering spokes in the wheel plane without moving the rim away from the palms", () => {
+    inScene((art, scene) => {
+      const model = makeKart(art), state = createKart();
+      const wheel = scene.getMeshByName("steering wheel")!;
+      for (const steer of [-1, 0, 1]) {
+        model.animate(state, { ...NEUTRAL, steer }, 1 / 60, true);
+        const matrix = wheel.computeWorldMatrix(true);
+        const center = wheel.getAbsolutePosition(), normal = Vector3.TransformNormal(Vector3.Up(), matrix).normalize();
+        const driver = model.root.getChildTransformNodes(true).find(node => node.metadata?.characterId === "clutch")!;
+        for (const hand of driver.getChildTransformNodes(true).filter(node => node.name === "gripping hand")) {
+          hand.computeWorldMatrix(true);
+          const offset = hand.getAbsolutePosition().subtract(center);
+          expect(offset.length()).toBeCloseTo(RIDER_GRIPS.front.x);
+          expect(Vector3.Dot(offset, normal)).toBeCloseTo(0);
         }
       }
     });
@@ -206,7 +228,7 @@ describe("complete approved asset roster", () => {
       const bodyColors = new Set<string>(), decalVertexCounts = new Set<number>();
       for (const paint of PAINT_IDS) {
         const model = makeKart(art, { ...DEFAULT_BUILD, paint });
-        const hull = model.meshes.find(mesh => mesh.name.startsWith(model.root.name + ":rigid:"))!;
+        const hull = model.meshes.find(mesh => mesh.parent === model.root && mesh.material?.metadata?.surfaceFinish === "paint")!;
         bodyColors.add(JSON.stringify(hull.getVerticesData("color")));
         model.root.dispose();
       }
@@ -228,7 +250,7 @@ describe("complete approved asset roster", () => {
       }));
       for (let i = 0; i < models.length; i++) models[i].root.position.x = i * 4;
       const geometries = models.map(model => new Set(model.meshes.map(mesh => mesh.geometry)));
-      expect(models.reduce((sum, model) => sum + model.meshes.length, 0)).toBeLessThanOrEqual(8 * 35);
+      expect(models.reduce((sum, model) => sum + model.meshes.length, 0)).toBeLessThanOrEqual(8 * 56);
       expect([...geometries[0]].some(geometry => geometries[1].has(geometry))).toBe(false);
       models[3].root.dispose();
       const replacement = makeKart(art, { ...DEFAULT_BUILD, body: "air-pocket" });
@@ -252,7 +274,11 @@ describe("complete approved asset roster", () => {
       model.animate(state, { ...NEUTRAL, steer: 1 }, 1 / 60, true, { velvetBumpers: 3 });
       // Wheel rotation is functional motion and deliberately continues.
       const nodes = model.root.getChildTransformNodes();
-      for (let i = 0; i < nodes.length; i++) if (!nodes[i].name.includes("wheel rotation")) expect(Array.from(nodes[i].computeWorldMatrix(true).m)).toEqual(before[i]);
+      for (let i = 0; i < nodes.length; i++) {
+        let functionalWheel = nodes[i].metadata?.kind === "wheel";
+        for (let ancestor = nodes[i].parent; ancestor; ancestor = ancestor.parent) functionalWheel ||= ancestor.metadata?.kind === "wheel";
+        if (!functionalWheel) expect(Array.from(nodes[i].computeWorldMatrix(true).m), nodes[i].name).toEqual(before[i]);
+      }
       expect(model.meshes.filter(mesh => mesh.name === "drift tell" && mesh.isEnabled())).toHaveLength(2);
     });
   });
@@ -344,8 +370,8 @@ it("gives both riders a steering grip and a separate rear-rail pose through a sw
       const hands = rider.getChildTransformNodes(true).filter(node => node.name === "gripping hand");
       expect(hands).toHaveLength(2);
       for (const hand of hands) {
-        expect(hand.position.y + rider.position.y).toBeCloseTo(1.13);
-        expect(hand.position.z + rider.position.z).toBeCloseTo(0.72);
+        expect(hand.position.y + rider.position.y).toBeCloseTo(RIDER_GRIPS.front.y);
+        expect(hand.position.z + rider.position.z).toBeCloseTo(RIDER_GRIPS.front.z);
       }
     }
     state.swapTime = 0.21;

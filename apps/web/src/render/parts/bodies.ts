@@ -1,8 +1,10 @@
 import type { BodyId, DecalId, PaintId } from "@kartsick/content";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
+import { VertexData } from "@babylonjs/core/Meshes/mesh.vertexData";
 import { Atelier } from "../geometry";
 import type { Contour, Triple } from "../geometry";
-import { soft } from "../characters/rig";
+import { finishModel, node, RIDER_GRIPS, RIDER_MOUNT, soft, surface } from "../characters/rig";
+import { WHEEL_STANCE } from "./wheels";
 
 const INK = "#30394f", CREAM = "#f5f2e8";
 const ORIGINAL: Record<BodyId, string> = {
@@ -23,9 +25,23 @@ export function bodyPalette(body: BodyId, paint: PaintId): BodyPalette {
   };
 }
 
-function hull(art: Atelier, root: TransformNode, name: string, sections: readonly (readonly [number, number, number, number])[], color: string, square = 0.83): void {
+function hull(art: Atelier, root: TransformNode, name: string, sections: readonly (readonly [number, number, number, number])[], color: string, square = 0.83, cockpit = true) {
   const mesh = art.sculpt(name, sections.map(([z, width, height, depth]): Contour => [z, width, depth, 0, -height]), color, root, square, 24);
+  if (cockpit) {
+    const positions = mesh.getVerticesData("position")!;
+    for (let i = 0; i < positions.length; i += 3) {
+      const x = Math.abs(positions[i]), z = positions[i + 1], height = -positions[i + 2];
+      const inset = Math.max(0, Math.min(1, (0.7 - x) / 0.17, (z + 1.34) / 0.2, (0.78 - z) / 0.2));
+      if (height > 0.3) positions[i + 2] += (height - 0.3) * inset;
+    }
+    const normals: number[] = [];
+    VertexData.ComputeNormals(positions, mesh.getIndices()!, normals);
+    mesh.setVerticesData("position", positions);
+    mesh.setVerticesData("normal", normals);
+    mesh.metadata = { kind: "recessed-cockpit-shell" };
+  }
   mesh.rotation.x = Math.PI / 2;
+  return mesh;
 }
 
 function pinstripe(art: Atelier, root: TransformNode, name: string, points: Triple[], color: string, width = 0.025) {
@@ -33,18 +49,31 @@ function pinstripe(art: Atelier, root: TransformNode, name: string, points: Trip
 }
 
 /** A common tandem interface, not eight skins over the same silhouette. */
-export function makeBody(art: Atelier, root: TransformNode, id: BodyId, paint: PaintId, decal: DecalId): BodyPalette {
+export function makeBody(art: Atelier, parent: TransformNode, id: BodyId, paint: PaintId, decal: DecalId): BodyPalette {
   const palette = bodyPalette(id, paint);
   const { enamel, trim, accent } = palette;
-  root.metadata = { ...root.metadata, bodyId: id, paintId: paint, decalId: decal };
-  soft(art, root, "rigid lower chassis", [0, 0.12, -0.1], [1.55, 0.27, 2.62], INK, 0.52);
+  parent.metadata = { ...parent.metadata, bodyId: id, paintId: paint, decalId: decal };
+  const root = node(art, `${id} sculpted coachwork`, parent);
+  root.metadata = { kind: "coachwork" };
+  root.scaling.set(1.075, 0.86, 0.86);
+  soft(art, root, "rigid lower chassis", [0, 0.08, -0.1], [1.6, 0.25, 2.63], INK, 0.52);
   switch (id) {
     case "boiler-bug":
-      hull(art, root, "Boiler Bug enamel tub", [[-1.6, 0.08, 0.37, 0.07], [-1.34, 0.75, 0.35, 0.23], [-0.63, 0.81, 0.39, 0.28], [0.38, 0.7, 0.38, 0.26], [1.16, 0.45, 0.27, 0.2], [1.56, 0.07, 0.25, 0.04]], enamel);
-      for (let i = 0; i < 6; i++) pinstripe(art, root, "ribbed boiler nose", [[-0.27 + i * 0.025, 0.593 - i * 0.032, 0.81 + i * 0.1], [0, 0.61 - i * 0.032, 0.84 + i * 0.1], [0.27 - i * 0.025, 0.593 - i * 0.032, 0.81 + i * 0.1]], trim, 0.018);
+      hull(art, root, "Boiler Bug broad rolled enamel tub", [[-1.6, 0.27, 0.29, 0.08], [-1.4, 0.7, 0.29, 0.19],
+        [-0.85, 0.88, 0.32, 0.22], [0.1, 0.84, 0.3, 0.21], [0.72, 0.71, 0.3, 0.23],
+        [1.28, 0.54, 0.29, 0.225], [1.55, 0.31, 0.28, 0.135], [1.6, 0.13, 0.28, 0.055]], enamel, 0.77);
+      hull(art, root, "sculpted boiler bonnet", [[0.71, 0.35, 0.49, 0.025], [0.82, 0.52, 0.52, 0.08],
+        [1.15, 0.45, 0.46, 0.13], [1.43, 0.29, 0.4, 0.095], [1.51, 0.13, 0.36, 0.018]], enamel, 0.8, false);
+      for (let i = 0; i < 5; i++) pinstripe(art, root, "inset boiler nose cooling rib", [[-0.3 + i * 0.025, 0.597 - i * 0.025, 0.86 + i * 0.115],
+        [0, 0.626 - i * 0.03, 0.865 + i * 0.115], [0.3 - i * 0.025, 0.597 - i * 0.025, 0.86 + i * 0.115]], "#785b53", 0.015);
       for (const side of [-1, 1]) {
-        art.sweep("twin short exhaust", [[side * 0.6, 0.43, -0.68], [side * 0.78, 0.5, -1.2], [side * 0.81, 0.65, -1.65]], [0.095, 0.102, 0.095], "#6a8191", root, 12);
-        soft(art, root, "dark exhaust mouth", [side * 0.81, 0.66, -1.666], [0.145, 0.145, 0.035], INK);
+        art.sweep("twin short exhaust", [[side * 0.62, 0.28, -0.68], [side * 0.77, 0.32, -1.12], [side * 0.79, 0.4, -1.69]], [0.08, 0.096, 0.083], "#6a8191", root, 12);
+        soft(art, root, "rolled exhaust outlet lip", [side * 0.79, 0.4, -1.696], [0.184, 0.183, 0.07], "#b5c6ca");
+        soft(art, root, "recessed dark exhaust bore", [side * 0.79, 0.402, -1.734], [0.13, 0.13, 0.018], INK);
+        const pod = hull(art, root, "rolled boiler side pod", [[-0.83, 0.1, 0.4, 0.065], [-0.54, 0.2, 0.44, 0.16],
+          [0.23, 0.19, 0.42, 0.15], [0.66, 0.06, 0.33, 0.05]], enamel, 0.83, false);
+        pod.position.x = side * 0.68;
+        for (let i = 0; i < 3; i++) soft(art, root, "side pod cooling louvre", [side * 0.873, 0.42, -0.43 + i * 0.155], [0.018, 0.105, 0.06], "#785b53", 0.6);
       }
       break;
     case "trail-mix":
@@ -115,16 +144,39 @@ export function makeBody(art: Atelier, root: TransformNode, id: BodyId, paint: P
       }
       break;
   }
-  soft(art, root, "rear standing deck", [0, 0.62, -1.06], [1.54, 0.14, 0.85], "#f9e8be", 0.45);
-  for (let i = -2; i <= 2; i++) soft(art, root, "deck rubber grip", [i * 0.23, 0.696, -1.06], [0.085, 0.019, 0.59], "#687d87", 0.7);
-  soft(art, root, "seat cushion", [0, 0.61, 0.27], [0.94, 0.18, 0.76], "#657c91", 0.6);
-  soft(art, root, "seat back", [0, 0.81, -0.08], [0.94, 0.49, 0.18], "#657c91", 0.6);
+  surface(art, soft(art, parent, "recessed tandem cockpit liner", [0, 0.395, -0.2], [1.26, 0.16, 1.92], INK, 0.55), INK, "rubber");
+  for (const [index, z] of [RIDER_MOUNT.frontZ, RIDER_MOUNT.rearZ].entries()) {
+    surface(art, soft(art, parent, index === 0 ? "driver bucket cushion" : "rear crouching perch", [0, 0.455, z - 0.035],
+      [0.82, 0.13, 0.59], "#526572", 0.66), "#526572", "fabric");
+    surface(art, soft(art, parent, "sculpted seat back", [0, 0.59, z - 0.3], [0.8, index === 0 ? 0.46 : 0.32, 0.16], "#526572", 0.7), "#526572", "fabric").rotation.x = -0.1;
+    for (const side of [-1, 1]) {
+      surface(art, soft(art, parent, "padded bucket seat bolster", [side * 0.375, 0.51, z - 0.1], [0.12, 0.24, 0.56], "#657c91", 0.7), "#657c91", "fabric");
+      surface(art, art.sweep("stitched seat edge", [[side * 0.31, 0.67, z - 0.21], [side * 0.34, 0.54, z - 0.22],
+        [side * 0.34, 0.5, z + 0.14]], [0.009, 0.011, 0.009], "#bcc8c3", parent, 6), "#bcc8c3", "fabric");
+    }
+  }
+  surface(art, soft(art, parent, "rear non-slip standing deck", [0, 0.23, -0.77], [1.28, 0.09, 0.78], "#4b5964", 0.6), "#4b5964", "rubber");
+  for (const side of [-1, 1]) {
+    pinstripe(art, parent, "rolled cockpit coaming", [[side * 0.4, 0.52, 0.76], [side * 0.65, 0.56, 0.34],
+      [side * 0.69, 0.54, -0.65], [side * 0.5, 0.49, -1.15]], trim, 0.038);
+    pinstripe(art, parent, "rear side grip", [[side * RIDER_GRIPS.rear.x, 0.4, -1.1], [side * RIDER_GRIPS.rear.x, RIDER_GRIPS.rear.y, -1.07],
+      [side * RIDER_GRIPS.rear.x, RIDER_GRIPS.rear.y, -0.71]], accent, 0.035);
+    surface(art, art.sweep("rear rubber hand grip", [[side * RIDER_GRIPS.rear.x, RIDER_GRIPS.rear.y, -0.96],
+      [side * RIDER_GRIPS.rear.x, RIDER_GRIPS.rear.y, -0.78]], [0.042, 0.042], INK, parent), INK, "rubber");
+    for (const z of [WHEEL_STANCE.frontZ, WHEEL_STANCE.rearZ]) {
+      surface(art, art.sweep("triangulated wishbone suspension", [[side * 0.57, 0.05, z - 0.16], [side * 1.005, 0.035, z],
+        [side * 0.57, 0.05, z + 0.16]], [0.037, 0.045, 0.037], "#788795", parent), "#788795", "metal");
+      surface(art, art.sweep("compact damper shaft", [[side * 0.75, 0.3, z], [side * 0.94, 0.025, z]],
+        [0.047, 0.034], "#d2d8cd", parent), "#d2d8cd", "metal");
+      for (let i = 0; i < 3; i++) surface(art, soft(art, parent, "suspension spring collar",
+        [side * (0.78 + i * 0.045), 0.25 - i * 0.063, z], [0.13, 0.035, 0.13], accent), accent, "paint");
+    }
+  }
   pinstripe(art, root, "tube front bumper", [[-0.81, 0.18, 1.14], [-0.61, 0.22, 1.7], [0.61, 0.22, 1.7], [0.81, 0.18, 1.14]], trim, 0.065);
   pinstripe(art, root, "tube rear bumper", [[-0.76, 0.23, -1.47], [-0.61, 0.25, -1.69], [0.61, 0.25, -1.69], [0.76, 0.23, -1.47]], trim, 0.055);
-  pinstripe(art, root, "rear handrail", [[-0.75, 0.57, -1.49], [-0.75, 1, -1.49], [0.75, 1, -1.49], [0.75, 0.57, -1.49]], accent, 0.041);
+  pinstripe(art, root, "rear handrail", [[-0.72, 0.35, -1.41], [-0.72, 0.76, -1.41], [0.72, 0.76, -1.41], [0.72, 0.35, -1.41]], accent, 0.036);
   const lampZ = id === "velvet-hammer" || id === "knuckle-bus" ? 1.59 : 1.36;
   for (const side of [-1, 1]) {
-    pinstripe(art, root, "rear side grip", [[side * 0.55, 0.66, -1.35], [side * 0.55, 1.02, -1.35], [side * 0.55, 1.02, -0.85]], accent, 0.042);
     soft(art, root, "headlight enamel bezel", [side * 0.49, 0.45, lampZ], [0.25, 0.21, 0.22], INK, 0.65);
     soft(art, root, "porcelain headlight lens", [side * 0.49, 0.45, lampZ + 0.105], [0.19, 0.15, 0.049], trim, 0.75);
     soft(art, root, "tail lamp", [side * 0.58, 0.4, -1.511], [0.16, 0.1, 0.055], "#ff8051", 0.65);
@@ -144,5 +196,11 @@ export function makeBody(art: Atelier, root: TransformNode, id: BodyId, paint: P
       if (decal === "chevrons") art.tube("second chevron decal", points.map(([px, py, pz]) => [px, py, pz + 0.22]), 0.024, trim, root);
     }
   }
+  finishModel(art, root, "paint", { metal: [trim, "#6a8191", "#b5c6ca", "#c6bcb5", "#cfa969", "#c6925c"],
+    rubber: [INK, "#785b53", "#4faaa9", "#694665"], fabric: ["#e8dabc", "#ad7956"] });
+  for (const mesh of root.getChildMeshes(true)) mesh.setParent(parent);
+  root.dispose();
+  // The chassis and cockpit live outside the coachwork transform so every build shares physical controls.
+  finishModel(art, parent, "paint");
   return palette;
 }

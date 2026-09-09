@@ -7,7 +7,7 @@ import type { DriverInput, KartState } from "@kartsick/simulation";
 import { Atelier } from "./geometry";
 import type { Triple } from "./geometry";
 import { makeCharacter } from "./characters";
-import { node, soft } from "./characters/rig";
+import { node, RIDER_GRIPS, RIDER_MOUNT, soft, surface } from "./characters/rig";
 import { makeBody } from "./parts/bodies";
 import { makeWheels } from "./parts/wheels";
 import { makeGlider } from "./parts/gliders";
@@ -44,26 +44,30 @@ export function makeKart(art: Atelier, build: KartBuild = DEFAULT_BUILD): KartMo
   root.metadata = { kind: "kart", characterIds: [...build.characters] };
   const palette = makeBody(art, root, build.body, build.paint, build.decal);
   const wheels = makeWheels(art, root, build.wheels, palette.accent);
-  const steeringWheel = MeshBuilder.CreateTorus("steering wheel", { diameter: 0.48, thickness: 0.043, tessellation: 20 }, art.scene);
-  art.place(steeringWheel, [0, 1.13, 0.74], art.material("#30394f"), root);
-  steeringWheel.rotation.x = 0.6;
-  art.tube("steering column", [[0, 0.5, 0.94], [0, 1.1, 0.76]], 0.035, "#687d87", root);
+  const steeringPivot = node(art, "inclined steering hub", root, [0, RIDER_GRIPS.front.y, RIDER_GRIPS.front.z]);
+  steeringPivot.rotation.x = 0.6;
+  const steeringWheel = MeshBuilder.CreateTorus("steering wheel", { diameter: RIDER_GRIPS.front.x * 2, thickness: 0.043, tessellation: 24 }, art.scene);
+  art.place(steeringWheel, [0, 0, 0], art.surface("#30394f", "rubber"), steeringPivot);
+  surface(art, art.tube("steering column", [[0, 0.43, 0.9], [0, 0.96, 0.75]], 0.029, "#687d87", root), "#687d87", "metal");
+  for (const side of [-1, 1]) surface(art, art.tube("steering wheel spoke", [[0, 0, 0], [side * 0.22, 0, 0]],
+    0.018, "#b5c6ca", steeringWheel), "#b5c6ca", "metal");
+  surface(art, soft(art, steeringWheel, "steering horn boss", [0, 0.018, 0], [0.13, 0.07, 0.13], "#b5c6ca"), "#b5c6ca", "metal");
   const characters = build.characters.map(id => makeCharacter(art, id));
   for (let i = 0; i < characters.length; i++) {
     characters[i].root.parent = root;
-    characters[i].root.position.set(0, 0.62, i === 0 ? 0.22 : -1);
+    characters[i].root.position.set(0, RIDER_MOUNT.y, i === 0 ? RIDER_MOUNT.frontZ : RIDER_MOUNT.rearZ);
     characters[i].pose(i === 0 ? 1 : 0, 0, 0, true, 0);
   }
   const wing = makeGlider(art, root, build.glider, palette);
   const flames = [-1, 1].map(side => {
-    const flame = soft(art, root, "boost flame", [side * 0.76, 0.44, -1.94], [0.19, 0.19, 0.61], "#72e5ff");
+    const flame = soft(art, root, "boost flame", [side * 0.85, 0.344, -1.71], [0.16, 0.16, 0.5], "#72e5ff");
     flame.material = art.material("#72e5ff", true);
     flame.setEnabled(false);
     return flame;
   });
   const sparkMaterials = ["#fff1c8", "#ff9551", "#62e0ff"].map(color => art.material(color, true));
   const sparks = [-1, 1].map(side => {
-    const spark = soft(art, root, "drift tell", [side * 1.02, -0.15, -1.51], [0.15, 0.13, 0.42], "#fff1c8");
+    const spark = soft(art, root, "drift tell", [side * 1.04, -0.15, -1.35], [0.15, 0.13, 0.38], "#fff1c8");
     spark.material = sparkMaterials[0];
     spark.setEnabled(false);
     return spark;
@@ -123,12 +127,13 @@ export function makeKart(art: Atelier, build: KartBuild = DEFAULT_BUILD): KartMo
       const arc = swapping ? Math.sin(swap * Math.PI) : 0;
       for (let i = 0; i < characters.length; i++) {
         const isFront = i === state.driver;
-        const z = isFront ? 0.22 : -1, previousZ = isFront ? -1 : 0.22;
+        const z = isFront ? RIDER_MOUNT.frontZ : RIDER_MOUNT.rearZ;
+        const previousZ = isFront ? RIDER_MOUNT.rearZ : RIDER_MOUNT.frontZ;
         const rider = characters[i];
         const front = swapping ? lerp(isFront ? 0 : 1, isFront ? 1 : 0, swap) : Number(isFront);
         rider.root.position.set(
           arc * (i ? -0.7 : 0.7),
-          0.62 + (reducedMotion ? 0 : arc * 0.15 + Math.sin(state.tick * 0.13 + i) * Math.min(Math.abs(state.speed) / 2000, 0.012)),
+          RIDER_MOUNT.y + (reducedMotion ? 0 : arc * 0.15 + Math.sin(state.tick * 0.13 + i) * Math.min(Math.abs(state.speed) / 2000, 0.012)),
           swapping ? lerp(previousZ, z, swap) : z,
         );
         rider.root.rotation.z = reducedMotion ? 0 : input.steer * Math.min(Math.abs(state.speed) / 220, 0.095) * (isFront ? -0.65 : 1);
@@ -136,7 +141,7 @@ export function makeKart(art: Atelier, build: KartBuild = DEFAULT_BUILD): KartMo
       }
       for (const flame of flames) {
         flame.setEnabled(state.boost > 0);
-        flame.scaling.z = reducedMotion ? 0.61 : 0.61 + Math.sin(state.tick * 1.7) * 0.07;
+        flame.scaling.z = reducedMotion ? 0.5 : 0.5 + Math.sin(state.tick * 1.7) * 0.07;
       }
       for (const spark of sparks) {
         spark.setEnabled(state.driftDirection !== 0 && state.driftCharge > 0);

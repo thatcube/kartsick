@@ -8,6 +8,8 @@ import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import { VertexData } from "@babylonjs/core/Meshes/mesh.vertexData";
 import { VertexBuffer } from "@babylonjs/core/Buffers/buffer";
 import type { Scene } from "@babylonjs/core/scene";
+import { applySurfaceFinish } from "./surface-finishes";
+import type { SurfaceFinish } from "./surface-finishes";
 
 export type Triple = readonly [number, number, number];
 /** Height, half width, half depth, optional horizontal and depth offsets. */
@@ -19,20 +21,25 @@ export class Atelier {
 
   constructor(readonly scene: Scene) {}
 
-  material(hex: string, glow = false): StandardMaterial {
-    const key = hex + glow;
+  material(hex: string, glow = false, finish: SurfaceFinish = "matte"): StandardMaterial {
+    const key = `${hex}:${glow}:${finish}`;
     const existing = this.materials.get(key);
     if (existing) return existing;
     const material = new StandardMaterial(key, this.scene);
     material.diffuseColor = Color3.FromHexString(hex);
-    material.specularColor = glow ? Color3.Black() : new Color3(0.13, 0.12, 0.1);
-    material.specularPower = 48;
+    applySurfaceFinish(material, finish, this.scene.environmentTexture);
     if (glow) {
+      material.specularColor = Color3.Black();
+      material.reflectionTexture = null;
       material.emissiveColor = material.diffuseColor;
       material.disableLighting = true;
     }
     this.materials.set(key, material);
     return material;
+  }
+
+  surface(hex: string, finish: SurfaceFinish): StandardMaterial {
+    return this.material(hex, false, finish);
   }
 
   place(mesh: Mesh, position: Triple, material: StandardMaterial, parent?: TransformNode): Mesh {
@@ -227,12 +234,13 @@ export class Atelier {
     for (const mesh of root.getChildMeshes()) {
       if (!(mesh instanceof Mesh) || animated.has(mesh) ||
         !(mesh.parent instanceof TransformNode) || !(mesh.material instanceof StandardMaterial)) continue;
-      let batchMaterial = mesh.material;
-      if (vertexColors && mesh.material.alpha === 1 && mesh.material.getActiveTextures().length === 0 &&
-        mesh.material.backFaceCulling && !mesh.hasVertexAlpha && !mesh.material.wireframe &&
-        !mesh.material.pointsCloud && mesh.material.ambientColor.equalsFloats(0, 0, 0) &&
-        mesh.material.emissiveColor.equals(mesh.material.disableLighting ? mesh.material.diffuseColor : Color3.Black())) {
-        const source = mesh.material;
+      const source = mesh.material;
+      let batchMaterial = source;
+      if (vertexColors && source.alpha === 1 &&
+        source.getActiveTextures().every(texture => texture === source.reflectionTexture) &&
+        source.backFaceCulling && !mesh.hasVertexAlpha && !source.wireframe &&
+        !source.pointsCloud && source.ambientColor.equalsFloats(0, 0, 0) &&
+        source.emissiveColor.equals(source.disableLighting ? source.diffuseColor : Color3.Black())) {
         const color = source.diffuseColor;
         const existing = mesh.getVerticesData(VertexBuffer.ColorKind);
         const colors: number[] = [];
@@ -241,13 +249,18 @@ export class Atelier {
             color.b * (existing?.[i * 4 + 2] ?? 1), 1);
         }
         mesh.setVerticesData(VertexBuffer.ColorKind, colors);
-        const key = `vertex:${source.disableLighting}:${source.specularColor.toHexString()}:${source.specularPower}`;
+        const finish = source.metadata?.surfaceFinish ?? "custom";
+        const key = `vertex:${finish}:${source.disableLighting}:${source.specularColor.toHexString()}:${source.specularPower}:${source.roughness}:${source.reflectionTexture?.uniqueId ?? "none"}`;
         let shared = this.materials.get(key);
         if (!shared) {
           shared = new StandardMaterial(key, this.scene);
           shared.diffuseColor = Color3.White();
           shared.specularColor = source.specularColor.clone();
           shared.specularPower = source.specularPower;
+          shared.roughness = source.roughness;
+          shared.reflectionTexture = source.reflectionTexture;
+          shared.reflectionFresnelParameters = source.reflectionFresnelParameters?.clone() ?? null;
+          shared.metadata = { surfaceFinish: finish };
           shared.disableLighting = source.disableLighting;
           shared.emissiveColor = source.disableLighting ? Color3.White() : Color3.Black();
           this.materials.set(key, shared);

@@ -40,7 +40,7 @@ it("bounds every modular combination by the independent part maxima, including t
       ...bodies[0].id, wheels: wheels[0].id, glider: gliders[0].id,
     });
     expect(vertices(worst.root)).toBe(maximum);
-    expect(maximum).toBeLessThan(100_000);
-    expect(worst.meshes.length).toBeLessThanOrEqual(35);
+    expect(maximum).toBeLessThan(70_000);
+    expect(worst.meshes.length).toBeLessThanOrEqual(56);
   } finally { scene.dispose(); engine.dispose(); }
 });

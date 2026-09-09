@@ -1,12 +1,14 @@
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
+import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import type { WheelId } from "@kartsick/content";
 import { Atelier } from "../geometry";
-import { soft } from "../characters/rig";
+import { finishModel, soft, surface } from "../characters/rig";
 
-const TIRE = "#30394f", CREAM = "#f5edda";
+const TIRE = "#252e3c", CREAM = "#f5edda";
 export const WHEEL_RADII: Record<WheelId, number> = { picnic: 0.43, button: 0.37, thimble: 0.43, bramble: 0.45, cushion: 0.44, spool: 0.48 };
-const WIDTH: Record<WheelId, number> = { picnic: 0.34, button: 0.31, thimble: 0.32, bramble: 0.37, cushion: 0.45, spool: 0.25 };
+export const WHEEL_WIDTHS: Record<WheelId, number> = { picnic: 0.4, button: 0.36, thimble: 0.36, bramble: 0.43, cushion: 0.47, spool: 0.27 };
+export const WHEEL_STANCE = { halfTrack: 1.025, frontZ: 0.88, rearZ: -0.98 } as const;
 
 export interface WheelRig { steering: TransformNode[]; rollers: TransformNode[]; radius: number }
 
@@ -22,31 +24,73 @@ function ring(art: Atelier, root: TransformNode, name: string, x: number, diamet
   mesh.rotation.z = Math.PI / 2;
 }
 
+/** One rounded tire carcass and one low-vertex tread mesh instead of many overlapping toruses. */
+function tire(art: Atelier, root: TransformNode, radius: number, width: number, id: WheelId): void {
+  const profile = [
+    [radius * 0.5, -width * 0.48], [radius * 0.73, -width * 0.52], [radius * 0.91, -width * 0.48],
+    [radius - 0.017, -width * 0.33], [radius - 0.013, 0], [radius - 0.017, width * 0.33],
+    [radius * 0.91, width * 0.48], [radius * 0.73, width * 0.52], [radius * 0.5, width * 0.48],
+    [radius * 0.5, -width * 0.48],
+  ];
+  const carcass = MeshBuilder.CreateLathe("rounded rubber carcass", {
+    shape: profile.map(([r, x]) => new Vector3(r, x, 0)), tessellation: 32,
+  }, art.scene);
+  art.place(carcass, [0, 0, 0], art.surface(TIRE, "rubber"), root);
+  carcass.rotation.z = Math.PI / 2;
+  const positions: number[] = [], indices: number[] = [];
+  const blocks = id === "bramble" ? 16 : 28;
+  for (const side of [-1, 1]) for (let i = 0; i < blocks; i++) {
+    const angle = (i + (side === -1 ? 0.35 : 0)) / blocks * Math.PI * 2;
+    const arc = Math.PI * 2 / blocks * (id === "bramble" ? 0.3 : 0.42);
+    const base = positions.length / 3;
+    for (const r of [radius - 0.024, radius]) for (const x of [side * width * 0.035, side * width * 0.31]) {
+      for (const a of [-arc, arc]) {
+        const theta = angle + a + x * 0.45;
+        positions.push(x, Math.sin(theta) * r, Math.cos(theta) * r);
+      }
+    }
+    for (const face of [[0, 1, 3, 2], [4, 6, 7, 5], [0, 4, 5, 1], [2, 3, 7, 6], [0, 2, 6, 4], [1, 5, 7, 3]]) {
+      const [a, b, c, d] = side === -1 ? face : [...face].reverse();
+      indices.push(base + a, base + b, base + c, base + a, base + c, base + d);
+    }
+  }
+  const tread = art.mesh("staggered chevron tire tread", positions, indices);
+  art.place(tread, [0, 0, 0], art.surface("#35404c", "rubber"), root);
+}
+
 export function makeWheels(art: Atelier, parent: TransformNode, id: WheelId, accent: string): WheelRig {
   const steering: TransformNode[] = [], rollers: TransformNode[] = [];
-  const radius = WHEEL_RADII[id], width = WIDTH[id];
+  const radius = WHEEL_RADII[id], width = WHEEL_WIDTHS[id];
   for (const side of [-1, 1]) for (const front of [true, false]) {
     const pivot = new TransformNode("wheel steering", art.scene);
     pivot.parent = parent;
-    pivot.position.set(side * 0.99, radius - 0.43, front ? 0.95 : -1.13);
+    pivot.position.set(side * WHEEL_STANCE.halfTrack, radius - 0.43, front ? WHEEL_STANCE.frontZ : WHEEL_STANCE.rearZ);
     if (front) steering.push(pivot);
     const roller = new TransformNode(`${id} wheel rotation`, art.scene);
-    roller.metadata = { kind: "wheel", wheelId: id, radius };
+    roller.metadata = { kind: "wheel", wheelId: id, radius, width };
     roller.parent = pivot;
     rollers.push(roller);
-    if (id !== "spool") disc(art, roller, "rubber tire core", 0, radius * 2 - 0.1, width, TIRE);
+    if (id !== "spool") tire(art, roller, radius, width, id);
     else ring(art, roller, "open lightweight tire", 0, radius * 2 - 0.075, 0.075, TIRE);
+    const brake = disc(art, roller, "inboard steel brake disc", -side * width * 0.37, radius * 0.98, 0.035, "#788795");
+    surface(art, brake, "#788795", "metal");
+    for (const x of [-1, 1]) ring(art, roller, "embossed rubber sidewall bead", x * width * 0.51, radius * 1.46, 0.019, "#43505b");
     for (const outer of [-1, 1]) {
       const x = outer * width / 2;
-      ring(art, roller, "smooth rounded tire shoulder", x * 0.74, radius * 2 - 0.13, 0.13, TIRE);
+      if (outer !== side && id !== "spool") {
+        disc(art, roller, "inboard hub bearing", x, radius * 0.65, 0.038, "#6a7b87");
+        continue;
+      }
       switch (id) {
         case "picnic":
-          disc(art, roller, "cream picnic sidewall", x, 0.64, 0.025, CREAM);
-          disc(art, roller, "picnic blue hub", x * 1.09, 0.31, 0.03, "#3445a8");
+          ring(art, roller, "cream picnic sidewall", x, 0.568, 0.082, CREAM);
+          disc(art, roller, "recessed picnic rim bowl", x * 0.99, 0.48, 0.035, "#738897");
+          disc(art, roller, "picnic blue hub", x * 1.07, 0.31, 0.055, "#3445a8");
           for (let i = 0; i < 5; i++) {
             const a = i / 5 * Math.PI * 2;
             soft(art, roller, "blue hub dot", [x * 1.14, Math.sin(a) * 0.227, Math.cos(a) * 0.227], [0.025, 0.065, 0.065], "#3445a8");
           }
+          disc(art, roller, "polished axle button", x * 1.25, 0.11, 0.042, "#dce3dd");
           break;
         case "button":
           disc(art, roller, "oversized sewn button hub", x * 1.05, 0.58, 0.07, accent);
@@ -59,16 +103,15 @@ export function makeWheels(art: Atelier, parent: TransformNode, id: WheelId, acc
           soft(art, roller, "convex thimble cap", [x * 1.16, 0, 0], [0.1, 0.58, 0.58], "#dce3dd");
           for (let i = 0; i < 10; i++) {
             const a = i / 10 * Math.PI * 2;
-            soft(art, roller, "thimble stamped dimple", [x * 1.41, Math.sin(a) * 0.23, Math.cos(a) * 0.23], [0.009, 0.029, 0.029], "#7f939e");
+            art.oval("thimble stamped dimple", [x * 1.41, Math.sin(a) * 0.23, Math.cos(a) * 0.23], [0.009, 0.029, 0.029], "#7f939e", roller, 1, 4);
           }
           break;
         case "bramble":
           disc(art, roller, "copper bramble hub", x, 0.5, 0.045, "#c6925c");
           disc(art, roller, "bramble inset axle", x * 1.17, 0.23, 0.055, "#6a7b65");
-          for (let i = 0; i < 12; i++) {
-            const a = i / 12 * Math.PI * 2;
-            const knob = art.oval("rounded offroad knob", [x * 0.48, Math.sin(a) * 0.424, Math.cos(a) * 0.424], [0.19, 0.1, 0.15], "#45545b", roller, 0.7, 6);
-            knob.rotation.x = -a;
+          for (let i = 0; i < 5; i++) {
+            const a = i / 5 * Math.PI * 2;
+            soft(art, roller, "bramble recessed hub bolt", [x * 1.17, Math.sin(a) * 0.175, Math.cos(a) * 0.175], [0.032, 0.04, 0.04], "#e0c4a1", 0.65);
           }
           break;
         case "cushion":
@@ -90,6 +133,7 @@ export function makeWheels(art: Atelier, parent: TransformNode, id: WheelId, acc
           break;
       }
     }
+    finishModel(art, roller, "metal", { rubber: [TIRE, "#43505b", CREAM, "#657582"] });
   }
   return { steering, rollers, radius };
 }

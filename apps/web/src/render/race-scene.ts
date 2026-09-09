@@ -16,6 +16,7 @@ import { makeKart } from "./kart";
 import { makeTowbell } from "./rescue";
 import type { KartModel, KartVisualEffects } from "./kart";
 import { applyStageQuality, createStage, loadStageCourse, makeCamera } from "./stage";
+import { makeContactShadow, makeContactShadowMaterial, updateContactShadow } from "./contact-shadow";
 
 export interface RacerFrame {
   id: string;
@@ -53,10 +54,7 @@ export class RaceScene {
     this.stage = createStage(canvas, settings);
     this.engine = this.stage.engine;
     this.scene = this.stage.scene;
-    this.contactMaterial = new StandardMaterial("shared kart contact", this.scene);
-    this.contactMaterial.alpha = 0.18;
-    this.contactMaterial.disableLighting = true;
-    this.contactMaterial.emissiveColor = Color3.FromHexString("#3a5545");
+    this.contactMaterial = makeContactShadowMaterial(this.scene);
     this.warningMaterial = new StandardMaterial("item warning footprint", this.scene);
     this.warningMaterial.emissiveColor = Color3.FromHexString("#ffd46b");
     this.warningMaterial.disableLighting = true;
@@ -116,10 +114,7 @@ export class RaceScene {
         if (!entry.ghost) this.stage.shadows.addShadowCaster(mesh);
         mesh.receiveShadows = true;
       }
-      const contact = MeshBuilder.CreateDisc(`contact ${entry.id}`, { radius: 1, tessellation: 24 }, this.scene);
-      contact.rotation.x = Math.PI / 2;
-      contact.material = this.contactMaterial;
-      contact.isPickable = false;
+      const contact = makeContactShadow(this.scene, this.contactMaterial, `contact ${entry.id}`);
       this.karts.set(entry.id, { key, model, contact, feedback: entry.ghost ? null : new DrivingFeedback(this.scene),
         rescue: entry.ghost ? null : makeTowbell(this.stage.art), started: false });
     }
@@ -184,6 +179,7 @@ export class RaceScene {
     this.stage.worldRoot.scaling.x = mirror ? -1 : 1;
     for (const label of this.labels) label.scaling.x *= -1;
     this.stage.light.direction.x *= -1;
+    this.stage.atmosphere.setMirror(mirror);
     for (const rig of this.rigs) rig.chase.started = false;
   }
 
@@ -277,9 +273,7 @@ export class RaceScene {
       if (frame.visible === false) { kart.model.root.setEnabled(false); kart.contact.setEnabled(false); kart.rescue?.root.setEnabled(false); continue; }
       updateKartPose(kart.model, frame.previous, frame.state, frame.input, frame.alpha, bounded, moving, this.settings, course.surfaceHeight, kart.started, frame.effects);
       const position = kart.model.root.position;
-      kart.contact.position.set(position.x, course.surfaceHeight(position.x, position.z) + 0.02, position.z);
-      kart.contact.rotation.y = kart.model.root.rotation.y;
-      kart.contact.scaling.set(1.15 * kart.model.root.scaling.x, 1.6 * kart.model.root.scaling.z, 1);
+      updateContactShadow(kart.contact, course, kart.model.root);
       kart.contact.setEnabled(frame.state.mode === "ground" && frame.state.recovery === 0 && !frame.effects.ghost);
       if (kart.rescue) {
         kart.rescue.root.setEnabled(frame.state.recovery > 0);

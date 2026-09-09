@@ -1,4 +1,4 @@
-import { Color3 } from "@babylonjs/core/Maths/math.color";
+import { getCourse } from "@kartsick/content";
 import type { DriverInput, KartState } from "@kartsick/simulation";
 import type { Settings } from "../storage";
 import { makeKart } from "./kart";
@@ -6,8 +6,10 @@ import { makeTowbell } from "./rescue";
 import { DrivingFeedback } from "./feedback";
 import { ChaseCamera, updateKartPose } from "./driving-pose";
 import { applyStageQuality, createStage } from "./stage";
+import { makeContactShadow, makeContactShadowMaterial, updateContactShadow } from "./contact-shadow";
 
 export class StudyScene {
+  private readonly course = getCourse("butterbell");
   private readonly stage;
   readonly engine;
   readonly scene;
@@ -31,12 +33,7 @@ export class StudyScene {
         this.stage.shadows.addShadowCaster(mesh);
         mesh.receiveShadows = true;
       }
-      this.contact = this.stage.art.oval("soft kart contact", [0, 0, 0], [2.3, 0.008, 3.2], "#3a5545");
-      const material = this.stage.art.material("#3a5545");
-      material.alpha = 0.14;
-      material.disableLighting = true;
-      material.emissiveColor = Color3.FromHexString("#3a5545");
-      this.contact.material = material;
+      this.contact = makeContactShadow(this.scene, makeContactShadowMaterial(this.scene));
       this.feedback = new DrivingFeedback(this.scene);
       this.chase = new ChaseCamera(this.camera);
     } catch (error) {
@@ -54,8 +51,7 @@ export class StudyScene {
     this.time += bounded;
     updateKartPose(this.kart, previous, state, input, alpha, bounded, moving, settings, undefined, this.chase.started);
     const position = this.kart.root.position;
-    this.contact.position.set(position.x, position.y - 0.35, position.z);
-    this.contact.rotation.y = this.kart.root.rotation.y;
+    updateContactShadow(this.contact, this.course, this.kart.root);
     this.contact.setEnabled(state.mode === "ground" && state.recovery === 0);
     this.rescue.root.setEnabled(state.recovery > 0);
     this.rescue.root.position.copyFrom(position);

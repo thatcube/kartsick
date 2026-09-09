@@ -208,7 +208,7 @@ export function makeTiltglassWorld(art: Atelier, course: CourseQuery): CourseWor
   return {
     casters,
     environment: {
-      sky: TILTGLASS.palette.sky, fogStart: 260, fogEnd: 590, sun: "#ffe6c3", sunIntensity: 1.15,
+      sky: TILTGLASS.palette.sky, skyStyle: "indoor", fogStart: 260, fogEnd: 590, sun: "#ffe6c3", sunIntensity: 1.15,
       fill: "#b1c8e1", fillIntensity: 0.67, ground: TILTGLASS.palette.ground,
     },
     animate(time, reducedMotion = false) {

@@ -50,10 +50,10 @@ export class ChaseCamera {
     Vector3.LerpToRef(this.anchor, position, snap ? 1 : 1 - Math.exp(-dt * 28), this.anchor);
     const fx = Math.sin(this.yaw);
     const fz = Math.cos(this.yaw);
-    const distance = menu ? 8.4 : 7.6 + Math.abs(state.speed) * 0.015;
-    const cameraTarget = new Vector3(this.anchor.x - fx * distance, this.anchor.y + (menu ? 3.9 : 3.65), this.anchor.z - fz * distance);
+    const distance = menu ? 8.4 : 9 + Math.abs(state.speed) * 0.012;
+    const cameraTarget = new Vector3(this.anchor.x - fx * distance, this.anchor.y + (menu ? 3.9 : 4.15), this.anchor.z - fz * distance);
     cameraTarget.y = Math.max(cameraTarget.y, surface(cameraTarget.x, cameraTarget.z) + 1.25);
-    const target = new Vector3(x + fx * (menu ? 0.4 : 6.4), y + (menu ? 1.25 : 1.42), z + fz * (menu ? 0.4 : 6.4));
+    const target = new Vector3(x + fx * (menu ? 0.4 : 7.2), y + (menu ? 1.25 : 1.1), z + fz * (menu ? 0.4 : 7.2));
     if (settings.shake && !settings.reducedMotion) {
       cameraTarget.x += Math.sin(time * 71) * this.shake * 0.08;
       cameraTarget.y += Math.cos(time * 57) * this.shake * 0.055;

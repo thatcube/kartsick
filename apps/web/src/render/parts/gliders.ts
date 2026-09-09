@@ -6,13 +6,14 @@ import type { GliderId } from "@kartsick/content";
 import { Atelier } from "../geometry";
 import type { Triple } from "../geometry";
 import type { BodyPalette } from "./bodies";
+import { finishModel, surface } from "../characters/rig";
 
 function sail(art: Atelier, wing: TransformNode, name: string, rows: Triple[][], color: string): void {
   const mesh = MeshBuilder.CreateRibbon(name, {
     pathArray: rows.map(row => row.map(point => new Vector3(...point))),
     sideOrientation: Mesh.DOUBLESIDE,
   }, art.scene);
-  art.place(mesh, [0, 0, 0], art.material(color), wing);
+  art.place(mesh, [0, 0, 0], art.surface(color, "fabric"), wing);
 }
 
 const NAMES: Record<GliderId, string> = { mapwing: "Mapwing", sunfan: "Sunfan", crosskite: "Crosskite", bellflower: "Bellflower" };
@@ -20,13 +21,13 @@ const NAMES: Record<GliderId, string> = { mapwing: "Mapwing", sunfan: "Sunfan", 
 export function makeGlider(art: Atelier, parent: TransformNode, id: GliderId, palette: BodyPalette): TransformNode {
   const wing = new TransformNode(`${NAMES[id]} assembly`, art.scene);
   wing.parent = parent;
-  wing.position.set(0, 2.92, -0.27);
+  wing.position.set(0, 2.55, -0.27);
   wing.metadata = { kind: "glider", gliderId: id };
   const mastHeights: Record<GliderId, number> = { mapwing: 0.54, sunfan: 0.43, crosskite: 0.51, bellflower: 0.72 };
   const mastTip: Triple = [0, mastHeights[id], id === "sunfan" ? -0.25 : 0];
-  art.tube("telescoping glider mast", [[0, -2.37, 0], [0, 0, 0], mastTip], 0.038, palette.trim, wing);
-  art.tube("glider tension bridle", [[-0.68, -2.3, 0], mastTip, [0.68, -2.3, 0]], 0.009, "#687d87", wing);
-  art.oval("canopy mast collar", mastTip, [0.2, 0.09, 0.18], palette.trim, wing, 0.8, 8);
+  surface(art, art.tube("telescoping glider mast", [[0, -2, 0], [0, 0, 0], mastTip], 0.031, palette.trim, wing), palette.trim, "metal");
+  surface(art, art.tube("glider tension bridle", [[-0.68, -1.93, 0], mastTip, [0.68, -1.93, 0]], 0.009, "#687d87", wing), "#687d87", "metal");
+  surface(art, art.oval("canopy mast collar", mastTip, [0.17, 0.075, 0.16], palette.trim, wing, 0.8, 8), palette.trim, "metal");
   switch (id) {
     case "mapwing":
       for (const side of [-1, 1]) {
@@ -113,6 +114,7 @@ export function makeGlider(art: Atelier, parent: TransformNode, id: GliderId, pa
       }
       break;
   }
+  finishModel(art, wing, "fabric");
   wing.setEnabled(false);
   return wing;
 }

@@ -21,6 +21,16 @@ animation and selective modern enhancements, not voxel/block art or a crude
 retro substitute. The eight mascots should be cursed and off-model in an
 approachable classic-console way: no gross-out, slime, or grotesque monsters.
 
+The visual quality benchmark is polished modern kart racing: coherent
+rider/vehicle/environment proportions, sculpted character silhouettes, distinct
+paint/metal/rubber/fabric finishes, readable surface detail, convincing lighting
+and contact shadows, and composed foreground, middle distance and skyline.
+Start the art overhaul with a genuinely transformed playable Butterbell, then
+carry its quality standard across the remaining content. More primitive props
+or a global color filter alone do not meet this benchmark. Reference screenshots
+inform quality and composition only; their characters, artwork and branding are
+not production assets.
+
 Friends race entirely in a browser, with responsive online play and
 controller-operated essential flows. Controllers are the primary input target;
 keyboard support is a fallback, not the basis for controller handling approval.
