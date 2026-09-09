@@ -48,6 +48,16 @@ export function butterbellBarn(art: ButterbellArt, material: ButterbellMaterials
       art.tube("diagonal barn joinery", [[x + half * .15, y + .3, face + side * .17], [x + half * 2.6, y + 4.6, face + side * .17]], .085, C.cream, "paint");
       art.box("barn iron latch", [x + half * .28, y + 2.2, face + side * .22], [.07, .42, .07], C.iron, "metal");
       art.box("barn corner board", [x + half * 6.91, y + 3.8, face + side * .04], [.19, 6.8, .16], C.cream, "paint");
+      for (let can = 0; can < 3; can++) {
+        const cx = x + half * (4 + can * .62), cz = face - side * .07;
+        // Shallow wall-mounted milk-churn reliefs remain inside the original barn collider.
+        const churn = art.cylinder("dairy milk churn", [cx, y + .87, cz], .47, .58, .85, C.cream, "paint");
+        churn.scaling.z = .5;
+        const shoulder = art.cylinder("churn rolled shoulder", [cx, y + 1.35, cz], .28, .47, .16, C.roof, "paint");
+        shoulder.scaling.z = .5;
+        const lid = art.cylinder("churn enamel lid", [cx, y + 1.46, cz], .34, .34, .07, C.cream, "paint");
+        lid.scaling.z = .5;
+      }
     }
     art.box("dairy nameboard frame", [x, y + 6, face + side * .09], [8.8, 1.16, .17], C.roofShadow, "paint");
     art.label("BUTTERBELL", [x, y + 6, face + side * .19], 8.5, .93, side < 0 ? 0 : Math.PI);
@@ -59,6 +69,24 @@ export function butterbellBarn(art: ButterbellArt, material: ButterbellMaterials
       art.box("barn side window trim", [x + side * 7.035, y + 3.7, z + depth], [.11, 1.8, 1.8], C.cream, "paint");
       art.box("barn side window glass", [x + side * 7.10, y + 3.7, z + depth], [.055, 1.5, 1.48], C.roofShadow, "paint");
       art.box("barn side window bar", [x + side * 7.14, y + 3.7, z + depth], [.06, .075, 1.5], C.cream, "paint");
+      for (let slat = 0; slat < 5; slat++) {
+        art.box("dairy blue window shutter", [x + side * 7.135, y + 3.1 + slat * .3, z + depth - 1.1],
+          [.095, .22, .46], C.roof, "paint");
+      }
+      const awning: number[] = [], awningColors: number[] = [], awningIndices: number[] = [];
+      for (let strip = 0; strip < 6; strip++) {
+        const base = awning.length / 3;
+        const color = strip % 2 ? [.96, .90, .70, 1] : [.78, .27, .13, 1];
+        const front = z + depth - 1.35 + strip * .45, back = front + .45;
+        const points = [x + side * 7.08, y + 5, front, x + side * 8.35, y + 4.62, front,
+          x + side * 7.08, y + 5, back, x + side * 8.35, y + 4.62, back];
+        awning.push(...points, ...points);
+        for (let vertex = 0; vertex < 8; vertex++) awningColors.push(...color);
+        awningIndices.push(base, base + 1, base + 2, base + 1, base + 3, base + 2,
+          base + 6, base + 5, base + 4, base + 6, base + 7, base + 5);
+      }
+      art.mesh("striped dairy window awning", awning, awningIndices, art.art.surface("#ffffff", "fabric"), awningColors);
+      art.box("awning hem", [x + side * 8.35, y + 4.48, z + depth], [.055, .28, 2.7], C.cream, "fabric");
     }
     art.box("barn eave gutter", [x + side * 7.17, y + 7.05, z], [.15, .16, 12.45], C.roofShadow, "metal");
     art.box("barn downpipe", [x + side * 7.13, y + 3.5, z - 5.55], [.13, 6.7, .13], C.roofShadow, "metal");

@@ -8,14 +8,14 @@ import { Texture } from "@babylonjs/core/Materials/Textures/texture";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import {
   BARNS, ORCHARD, ROAD, ROAD_WIDTH, SHOULDER_WIDTH, WATER_LEVEL, bankHeight, bankWidth,
-  butterbellHazards, terrainHeight, getCourse, isGap,
+  butterbellHazards, terrainHeight, getCourse, isGap, projectRoad, surfaceHeight, isWater,
 } from "@kartsick/content";
 import { Atelier } from "./geometry";
 import { makeWorld } from "./world";
 import { makeCourseWorld } from "./course-worlds";
 import type { StudyWorld } from "./world";
 import { butterbellDecorationClearance } from "./butterbell-art";
-import { butterbellFieldColor, butterbellTexturePixels, BUTTERBELL_TEXTURE_SIZE } from "./butterbell-materials";
+import { butterbellFieldColor, butterbellTexturePixels, BUTTERBELL_TEXTURE_SIZE, BUTTERBELL_TEXTURES } from "./butterbell-materials";
 
 describe("Butterbell authored countryside", () => {
   const engine = new NullEngine(), scene = new Scene(engine);
@@ -90,7 +90,7 @@ describe("Butterbell authored countryside", () => {
       const x = positions[i], y = positions[i + 1], z = positions[i + 2];
       expect(Math.abs(x) >= 239.999 || Math.abs(z) >= 249.999).toBe(true);
       expect(normals[i + 1]).toBeGreaterThan(0);
-      if (i < 161 * 3) expect(y).toBeCloseTo(terrainHeight(x, z), 4);
+      if (i < 241 * 3) expect(y).toBeCloseTo(terrainHeight(x, z), 4);
       heights.add(Math.round(y));
     }
     expect(heights.size).toBeGreaterThan(65);
@@ -172,22 +172,16 @@ describe("Butterbell authored countryside", () => {
     }
   });
 
-  it("faces roofs and sculpted orchard crowns outward rather than lighting their inside faces", () => {
+  it("faces roofs outward and loads the branching orchard rather than the old single crowns", () => {
     for (const [, positions, indices] of rawMeshes.filter(([name]) =>
       name === "standing seam gambrel roof" || name === "silo spun metal cap")) {
       const normals: number[] = [];
       VertexData.ComputeNormals(positions, indices, normals);
       for (let i = 1; i < normals.length; i += 3) expect(normals[i]).toBeGreaterThanOrEqual(0);
     }
-    const crowns = rawMeshes.filter(([name]) => name === "sculpted orchard canopy");
-    for (let i = 0; i < crowns.length; i++) {
-      const [, positions, indices] = crowns[i], t = ORCHARD[i], normals: number[] = [];
-      VertexData.ComputeNormals(positions, indices, normals);
-      for (let vertex = 3 * 19; vertex < 6 * 19; vertex++) {
-        const n = vertex * 3;
-        expect((positions[n] - t.x) * normals[n] + (positions[n + 2] - t.z) * normals[n + 2]).toBeGreaterThan(0);
-      }
-    }
+    expect(rawMeshes.filter(([name]) => name === "butterbell interlocking orchard crowns")).toHaveLength(ORCHARD.length);
+    expect(rawMeshes.filter(([name]) => name === "butterbell branching orchard limbs")).toHaveLength(ORCHARD.length);
+    expect(rawMeshes.some(([name]) => name === "sculpted orchard canopy")).toBe(false);
   });
 
   it("never sends zero or nonfinite world normals into HDR lighting and bloom", () => {
@@ -225,6 +219,58 @@ describe("Butterbell authored countryside", () => {
     expect(overhead[1][1] - overhead[2][1] / 2 - start.y).toBeGreaterThan(6.9);
   });
 
+  it("grounds farmyards and orchard beds without paving over racing surfaces", () => {
+    const patches = rawMeshes.filter(([name]) => /butterbell (dairy cobbled yard|herb bed|orchard mulch)/.test(name));
+    expect(patches.filter(([name]) => name.includes("cobbled yard"))).toHaveLength(BARNS.length);
+    expect(patches.length).toBeGreaterThan(ORCHARD.length / 2);
+    for (const [name, positions, indices] of patches) {
+      const normals: number[] = [];
+      VertexData.ComputeNormals(positions, indices, normals);
+      for (let i = 0; i < positions.length; i += 3) {
+        const x = positions[i], z = positions[i + 2], p = projectRoad(x, z);
+        expect(p.separation, name).toBeGreaterThan(SHOULDER_WIDTH + bankWidth(p));
+        expect(isWater(x, z), name).toBe(false);
+        expect(positions[i + 1], name).toBeCloseTo(surfaceHeight(x, z) + (name.includes("herb bed") ? .18 : .055), 4);
+        expect(normals[i + 1], name).toBeGreaterThan(0);
+      }
+    }
+    for (const name of ["butterbell yard", "butterbell verge", "butterbell meadow leaves"]) {
+      const material = scene.getMaterialByName(name);
+      expect(material, name).not.toBeNull();
+      expect(world.casters.some(mesh => mesh.material === material), name).toBe(false);
+    }
+  });
+
+  it("plants low meadow drifts outside the mown racing verge, not triangular confetti", () => {
+    const meadows = rawMeshes.filter(([name]) => name.startsWith("butterbell meadow drift"));
+    expect(meadows.length).toBeGreaterThan(8);
+    expect(rawMeshes.some(([name]) => name.startsWith("low pasture clover"))).toBe(false);
+    for (const [name, positions] of meadows) for (let i = 0; i < positions.length; i += 3) {
+      const x = positions[i], z = positions[i + 2], p = projectRoad(x, z);
+      expect(p.separation, name).toBeGreaterThan(SHOULDER_WIDTH + 1.8);
+      expect(positions[i + 1] - surfaceHeight(x, z), name).toBeLessThan(.8);
+    }
+  });
+
+  it("places the distant hamlet beyond recovery bounds rather than adding unseen driving obstacles", () => {
+    const houses = boxes.mock.calls.filter(([name]) => name === "distant dairy cottage");
+    expect(houses).toHaveLength(11);
+    const bounds = getCourse().bounds;
+    for (const [, position, size] of houses) {
+      expect(position[2] - size[2] / 2).toBeGreaterThan(bounds.maxZ + 25);
+    }
+  });
+
+  it("keeps the connected herb beds and hedges low and outside the racing banks", () => {
+    const plants = rawMeshes.filter(([name]) => name === "butterbell layered hedge crowns" || name === "butterbell hedge leaf sprays");
+    expect(plants.length).toBeGreaterThan(100);
+    for (const [name, positions] of plants) for (let i = 0; i < positions.length; i += 3) {
+      const x = positions[i], z = positions[i + 2], p = projectRoad(x, z);
+      expect(p.separation, name).toBeGreaterThan(SHOULDER_WIDTH + bankWidth(p));
+      expect(positions[i + 1] - surfaceHeight(x, z), name).toBeLessThan(1.1);
+    }
+  });
+
   it("keeps harvest hazards synchronized, including reduced motion and canonical mirroring", () => {
     const roots = [0, 1].map(i => scene.getTransformNodeByName(`hay-roller-${i}`)!);
     const rotor = scene.getTransformNodeByName("butterbell windmill rotor")!;
@@ -254,13 +300,14 @@ describe("Butterbell authored countryside", () => {
 
   it("uses bounded shared local textures and spatially batched geometry", () => {
     const localTextures = scene.textures.filter(t => t.name.startsWith("butterbell"));
-    expect(localTextures).toHaveLength(7);
-    expect(localTextures.filter(t => t.getSize().width === BUTTERBELL_TEXTURE_SIZE)).toHaveLength(6);
+    expect(localTextures).toHaveLength(BUTTERBELL_TEXTURES.length + 3);
+    expect(localTextures.filter(t => t.getSize().width === BUTTERBELL_TEXTURE_SIZE)).toHaveLength(BUTTERBELL_TEXTURES.length + 1);
+    expect(localTextures.filter(t => t.getSize().width === 256)).toHaveLength(1);
     const bytes = localTextures.reduce((sum, t) => sum + t.getSize().width * t.getSize().height * 4, 0);
     expect(bytes).toBeLessThanOrEqual(5 * 1024 * 1024);
-    expect(scene.meshes.length).toBeLessThan(230);
-    expect(scene.meshes.reduce((sum, m) => sum + m.getTotalVertices(), 0)).toBeLessThan(145000);
-    expect(scene.meshes.reduce((sum, m) => sum + m.getTotalIndices() / 3, 0)).toBeLessThan(185000);
+    expect(scene.meshes.length).toBeLessThan(320);
+    expect(scene.meshes.reduce((sum, m) => sum + m.getTotalVertices(), 0)).toBeLessThan(280000);
+    expect(scene.meshes.reduce((sum, m) => sum + m.getTotalIndices() / 3, 0)).toBeLessThan(345000);
     expect(scene.materials.length).toBeLessThan(65);
     const textured = scene.meshes.filter(m => m.material instanceof StandardMaterial && m.material.diffuseTexture);
     expect(textured.length).toBeGreaterThan(35);
@@ -297,7 +344,7 @@ describe("Butterbell authored countryside", () => {
 
 describe("Butterbell original material studies", () => {
   it("makes deterministic opaque aggregate, plant, grit, wood, roof and hay pixels", () => {
-    for (const kind of ["asphalt", "pasture", "verge", "siding", "roof", "hay"] as const) {
+    for (const kind of BUTTERBELL_TEXTURES) {
       const first = butterbellTexturePixels(kind);
       expect(first).toEqual(butterbellTexturePixels(kind));
       expect(first).toHaveLength(BUTTERBELL_TEXTURE_SIZE ** 2 * 4);

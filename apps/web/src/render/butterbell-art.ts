@@ -3,11 +3,11 @@ import { DynamicTexture } from "@babylonjs/core/Materials/Textures/dynamicTextur
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
-import { terrainHeight, projectRoad, bankWidth, SHOULDER_WIDTH, isWater, BARNS, WINDMILL } from "@kartsick/content";
+import { projectRoad, bankWidth, SHOULDER_WIDTH, isWater, BARNS, WINDMILL } from "@kartsick/content";
 import { Atelier } from "./geometry";
 import type { Triple } from "./geometry";
 import type { SurfaceFinish } from "./surface-finishes";
-import { BUTTERBELL as C, butterbellNoise as noise } from "./butterbell-materials";
+import { BUTTERBELL as C } from "./butterbell-materials";
 
 export const BUTTERBELL_SIGN_LABELS = [
   "BUTTERBELL", "PASTURES", "DAIRY ROAD RACES", "ORCHARD BEND", "BARN BEND",
@@ -122,82 +122,4 @@ export function butterbellDecorationClearance(x: number, z: number, radius: numb
   if (road.separation < SHOULDER_WIDTH + bankWidth(road) + radius + 2.5 || isWater(x, z)) return false;
   if (BARNS.some(b => Math.abs(x - b.x) < 16 + radius && Math.abs(z - b.z) < 10 + radius)) return false;
   return Math.hypot(x - WINDMILL.x, z - WINDMILL.z) > 13 + radius;
-}
-
-/** One sculpted, lobed crown rather than intersecting ellipsoid lollipops. */
-export function butterbellTree(art: ButterbellArt, x: number, z: number, scale: number, seed: number): void {
-  const ground = terrainHeight(x, z);
-  art.cylinder("orchard trunk core", [x, ground + 1.7 * scale, z], .32 * scale, .52 * scale, 3.4 * scale, C.timber, "wood");
-  for (let branch = 0; branch < 3; branch++) {
-    const angle = branch * Math.PI * 2 / 3 + seed;
-    art.tube("pruned orchard limb", [
-      [x, ground + 1.85 * scale, z],
-      [x + Math.cos(angle) * .43 * scale, ground + 2.6 * scale, z + Math.sin(angle) * .43 * scale],
-      [x + Math.cos(angle) * 1.35 * scale, ground + 3.4 * scale, z + Math.sin(angle) * 1.35 * scale],
-    ], .095 * scale, C.timber);
-  }
-  const positions: number[] = [x, ground + 3.02 * scale, z], indices: number[] = [], colors: number[] = [];
-  const sides = 18, rings = 9;
-  const light = Color3.FromHexString(C.leafLight), dark = Color3.FromHexString(C.leafShadow);
-  const crownRadius = (a: number, v: number) => Math.sin(v * Math.PI) ** .72
-    * (2.45 + Math.sin(v * Math.PI) * .18)
-    * (1 + Math.sin(a * 5 + seed) * .13 + Math.cos(a * 3 - v * 3 + seed) * .08) * scale;
-  const bottomColor = Color3.Lerp(dark, light, .25);
-  colors.push(bottomColor.r, bottomColor.g, bottomColor.b, 1);
-  // Shared pole vertices avoid zero-area faces and zero normals in HDR lighting.
-  for (let row = 1; row < rings; row++) {
-    const v = row / rings, angleY = v * Math.PI;
-    for (let side = 0; side <= sides; side++) {
-      const a = side / sides * Math.PI * 2;
-      const radius = crownRadius(a, v);
-      positions.push(x + Math.cos(a) * radius,
-        ground + (3.02 + v * 3.45 + Math.sin(a * 5 + seed) * .15 * Math.sin(angleY)) * scale,
-        z + Math.sin(a) * radius * .9);
-      const tint = .25 + v * .43 + Math.max(0, -Math.cos(a) + Math.sin(a)) * .12;
-      const c = Color3.Lerp(dark, light, tint);
-      colors.push(c.r, c.g, c.b, 1);
-      if (row < rings - 1 && side < sides) {
-        const n = 1 + (row - 1) * (sides + 1) + side, next = n + sides + 1;
-        indices.push(n, n + 1, next, n + 1, next + 1, next);
-      }
-    }
-  }
-  const top = positions.length / 3, topColor = Color3.Lerp(dark, light, .68);
-  positions.push(x, ground + 6.47 * scale, z);
-  colors.push(topColor.r, topColor.g, topColor.b, 1);
-  for (let side = 0; side < sides; side++) {
-    indices.push(0, 2 + side, 1 + side);
-    const last = 1 + (rings - 2) * (sides + 1) + side;
-    indices.push(top, last, last + 1);
-  }
-  art.mesh("sculpted orchard canopy", positions, indices, art.art.material("#ffffff"), colors);
-  const fruitPositions: number[] = [], fruitIndices: number[] = [], fruitColors: number[] = [];
-  const fruitProfile = [[-.17, 0], [-.12, .105], [0, .155], [.105, .125], [.16, .028], [.13, 0]];
-  for (let i = 0; i < 7; i++) {
-    const a = i / 7 * Math.PI * 2 + seed;
-    const v = .28 + noise(seed + i) * .16, radius = crownRadius(a, v);
-    const fx = x + Math.cos(a) * radius, fz = z + Math.sin(a) * radius * .9;
-    const fy = ground + (3.02 + v * 3.45 + Math.sin(a * 5 + seed) * .15 * Math.sin(v * Math.PI)) * scale;
-    const tint = Color3.FromHexString(i % 3 ? C.dairy : C.straw), base = fruitPositions.length / 3;
-    fruitPositions.push(fx, fy + fruitProfile[0][0] * scale, fz);
-    fruitColors.push(tint.r, tint.g, tint.b, 1);
-    for (let row = 1; row < fruitProfile.length - 1; row++) for (let side = 0; side <= 6; side++) {
-      const angle = side / 6 * Math.PI * 2, [height, width] = fruitProfile[row];
-      fruitPositions.push(fx + Math.cos(angle) * width * scale, fy + height * scale, fz + Math.sin(angle) * width * scale);
-      fruitColors.push(tint.r, tint.g, tint.b, 1);
-      if (row < fruitProfile.length - 2 && side < 6) {
-        const n = base + 1 + (row - 1) * 7 + side;
-        fruitIndices.push(n, n + 1, n + 7, n + 1, n + 8, n + 7);
-      }
-    }
-    const cap = fruitPositions.length / 3;
-    fruitPositions.push(fx, fy + fruitProfile[5][0] * scale, fz);
-    fruitColors.push(tint.r, tint.g, tint.b, 1);
-    for (let side = 0; side < 6; side++) {
-      fruitIndices.push(base, base + 2 + side, base + 1 + side);
-      const last = base + 1 + 3 * 7 + side;
-      fruitIndices.push(cap, last, last + 1);
-    }
-  }
-  art.mesh("small sculpted orchard apples", fruitPositions, fruitIndices, art.art.surface("#ffffff", "paint"), fruitColors);
 }

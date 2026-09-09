@@ -9,12 +9,15 @@ import type { RoadPoint } from "@kartsick/content";
 import { Atelier } from "./geometry";
 import type { Triple } from "./geometry";
 import type { CourseWorld } from "./world-types";
-import { ButterbellArt, butterbellDecorationClearance, butterbellTree } from "./butterbell-art";
+import { ButterbellArt, butterbellDecorationClearance } from "./butterbell-art";
 import type { ButterbellSign } from "./butterbell-art";
 import { BUTTERBELL as C, butterbellFieldColor, butterbellNoise as noise, makeButterbellMaterials } from "./butterbell-materials";
 import type { ButterbellMaterials } from "./butterbell-materials";
 import { butterbellBarn, butterbellHay, butterbellWindmill } from "./butterbell-farm";
 import { butterbellExposedGround } from "./butterbell-ground";
+import { butterbellFarmGround, butterbellMeadows, butterbellPlantings } from "./butterbell-landscape";
+import { butterbellCountrysideHeight, butterbellDairyHamlet } from "./butterbell-backdrop";
+import { butterbellOrchardTree, makeButterbellFoliageMaterials } from "./butterbell-foliage";
 
 export interface StudyWorld extends CourseWorld {}
 
@@ -157,31 +160,6 @@ function fieldDetails(art: ButterbellArt, materials: ButterbellMaterials): void 
     }
     if (indices.length) art.mesh("contour-cut barley swath", positions, indices, materials.verge, colors, uv);
   }
-  const clover = new Map<string, { positions: number[]; colors: number[]; indices: number[] }>();
-  for (let i = 0; i < 1000; i++) {
-    const p = sampleRoad(noise(i + 581)), side = i % 2 ? -1 : 1;
-    const across = SHOULDER_WIDTH + bankWidth(p) + 1 + noise(i + 88) * 11;
-    const x = p.x + p.dz * side * across, z = p.z - p.dx * side * across;
-    if (isWater(x, z) || isGap(p.u)) continue;
-    const y = surfaceHeight(x, z) + .025, radius = .10 + noise(i + 212) * .12;
-    const key = `${Math.floor(x / 64)}:${Math.floor(z / 64)}`;
-    let patch = clover.get(key);
-    if (!patch) {
-      patch = { positions: [], colors: [], indices: [] };
-      clover.set(key, patch);
-    }
-    const { positions, colors, indices } = patch;
-    const base = positions.length / 3, color = i % 9 === 0 ? C.cream : i % 9 === 1 ? C.straw : C.leaf;
-    const tint = Color3.FromHexString(color);
-    // Clover, mower clippings and buttercups sit below the kart's contact plane.
-    positions.push(x - radius, y, z, x + radius, y, z, x, y + .075, z + radius * .7,
-      x, y + .075, z + radius * .7, x + radius, y, z, x - radius, y, z);
-    for (let corner = 0; corner < 6; corner++) colors.push(tint.r, tint.g, tint.b, 1);
-    indices.push(base, base + 1, base + 2, base + 3, base + 4, base + 5);
-  }
-  for (const [key, { positions, colors, indices }] of clover) {
-    art.mesh(`low pasture clover ${key}`, positions, indices, art.art.material("#ffffff"), colors);
-  }
   for (const line of [{ x: -17, start: -157, end: -52 }, { x: -109, start: -122, end: 74 }]) {
     for (let z = line.start; z < line.end; z += 4.5) {
       const x = line.x + Math.sin(z * .018) * 2, ex = line.x + Math.sin((z + 4.5) * .018) * 2;
@@ -196,18 +174,16 @@ function fieldDetails(art: ButterbellArt, materials: ButterbellMaterials): void 
 
 function horizon(art: Atelier, materials: ButterbellMaterials): void {
   const positions: number[] = [], indices: number[] = [], colors: number[] = [], uv: number[] = [];
-  const around = 160, rows = 28;
+  const around = 240, rows = 28;
   for (let row = 0; row <= rows; row++) for (let i = 0; i <= around; i++) {
     const angle = i / around * Math.PI * 2;
     const edge = 1 / Math.max(Math.abs(Math.cos(angle)), Math.abs(Math.sin(angle)));
     const outward = row * 23;
     const x = Math.cos(angle) * edge * (240 + outward), z = Math.sin(angle) * edge * (250 + outward);
-    const envelope = Math.sin(Math.min(1, outward / 230) * Math.PI / 2) ** 2;
-    const rolling = 30 + 19 * Math.sin(x * .012 + Math.sin(z * .009))
-      + 16 * Math.cos(z * .015 - Math.sin(x * .007)) + 9 * Math.sin((x + z) * .026);
-    positions.push(x, terrainHeight(x, z) + envelope * rolling, z);
+    positions.push(x, butterbellCountrysideHeight(x, z), z);
     const field = .5 + .5 * Math.sin(x * .025 + Math.sin(z * .018) * 2.4);
-    colors.push(.5 + field * .1, .66 + field * .09, .33 + field * .05, 1);
+    const hay = Math.max(0, Math.sin(x * .012 + z * .014)) ** 4;
+    colors.push(.5 + field * .1 + hay * .18, .66 + field * .09 + hay * .05, .33 + field * .05, 1);
     uv.push(x / 9, z / 9);
     if (row < rows && i < around) {
       const a = row * (around + 1) + i, next = a + around + 1;
@@ -330,15 +306,20 @@ export function updateButterbellHarvest(roots: readonly TransformNode[], time: n
 
 export function makeWorld(art: Atelier): StudyWorld {
   const materials = makeButterbellMaterials(art), scenery = new ButterbellArt(art);
+  const foliage = makeButterbellFoliageMaterials(art);
   farmland(art, materials);
   const roadCasters = raceway(art, scenery, materials);
   fieldDetails(scenery, materials);
-  for (const item of ORCHARD) butterbellTree(scenery, item.x, item.z, item.scale, item.seed);
+  butterbellFarmGround(scenery, materials);
+  const meadowMaterial = butterbellMeadows(scenery);
+  butterbellPlantings(scenery, foliage);
+  for (const item of ORCHARD) butterbellOrchardTree(scenery, foliage, item.x, item.z, item.scale, item.seed);
   for (const farm of BARNS) butterbellBarn(scenery, materials, farm.x, farm.z);
   for (const bale of HAY_BALES) butterbellHay(scenery, materials, bale.x, bale.z);
   const rotor = butterbellWindmill(scenery);
   pond(art, scenery);
   horizon(art, materials);
+  butterbellDairyHamlet(scenery);
   raceFestival(scenery);
   const rollers = HARVEST_POINTS.map((_, index) => {
     const root = new TransformNode(`hay-roller-${index}`, art.scene);
@@ -358,7 +339,8 @@ export function makeWorld(art: Atelier): StudyWorld {
     return root;
   });
   updateButterbellHarvest(rollers, 0);
-  const staticCasters = scenery.finish();
+  const staticCasters = scenery.finish().filter(mesh => mesh.material !== materials.yard &&
+    mesh.material !== materials.verge && mesh.material !== meadowMaterial);
   const meshes = (root: TransformNode) => root.getChildMeshes().filter((mesh): mesh is Mesh => mesh instanceof Mesh);
   art.scene.metadata = { ...art.scene.metadata, butterbellFurniture: scenery.furniture };
   return {

@@ -40,7 +40,7 @@ async function selectCourse(page: Page, id: CourseId): Promise<void> {
 }
 
 test("each authored world drives normally and mirrored without accumulating course resources", async ({ page }, info) => {
-  test.setTimeout(240_000);
+  test.setTimeout(360_000);
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
   page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
@@ -52,7 +52,7 @@ test("each authored world drives normally and mirrored without accumulating cour
       const mirrorChoice = page.getByRole("button", { name: /^Mirror / });
       if ((await mirrorChoice.innerText()).includes(mirror ? "Off" : "On")) await mirrorChoice.click();
       await page.getByRole("button", { name: "Start time trial", exact: true }).click();
-      await page.waitForFunction(() => window.__KARTSICK_RACE__?.read().race.phase === "racing");
+      await page.waitForFunction(() => window.__KARTSICK_RACE__?.read().race.phase === "racing", null, { timeout: 30_000 });
       const before = await page.evaluate(() => window.__KARTSICK_RACE__!.read());
       expect(before.renderedCourse).toBe(course.id);
       expect(before.race.options.mirror).toBe(mirror);

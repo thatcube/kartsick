@@ -2,6 +2,7 @@ import { test, expect } from "./fixture";
 import type { Page } from "@playwright/test";
 import { freshGame, GAME_STORAGE_KEY } from "../../apps/web/src/game-storage";
 import type { RaceRuntime } from "../../apps/web/src/race-runtime";
+import type { Quality } from "../../apps/web/src/storage";
 import { installControllers } from "./controllers";
 import { CUPS, availableSeries } from "@kartsick/content";
 
@@ -11,9 +12,9 @@ declare global {
   }
 }
 test.setTimeout(180_000);
-async function openGame(page: Page): Promise<void> {
+async function openGame(page: Page, quality: Quality = "low"): Promise<void> {
   const save = freshGame("Local racer");
-  save.settings.quality = "low";
+  save.settings.quality = quality;
   save.settings.reducedMotion = true;
   await page.addInitScript(({ key, save }) => { if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify(save)); }, { key: GAME_STORAGE_KEY, save });
   await page.goto("/");
@@ -54,7 +55,7 @@ test("real roster garage, eight-kart race, manual controls and pause", async ({ 
 
 test("four controllers produce four kart cameras; tandem shares one view", async ({ page }, info) => {
   await installControllers(page);
-  await openGame(page);
+  await openGame(page, "balanced");
   for (let index = 0; index < 4; index++) {
     await page.evaluate(index => {
       const pad = window.__racePads![index];

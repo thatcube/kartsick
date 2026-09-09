@@ -54,6 +54,9 @@ for (const quality of ["balanced", "high"] as const) test(`Butterbell ${quality}
     document.body.append(canvas);
     const settings: typeof DEFAULT_SETTINGS = { ...DEFAULT_SETTINGS, quality, reducedMotion: true, master: 0 };
     const stage = createStage(canvas, settings);
+    const worldResources = { meshes: stage.scene.meshes.length, materials: stage.scene.materials.length,
+      textures: stage.scene.textures.length, vertices: stage.scene.meshes.reduce((sum, mesh) => sum + mesh.getTotalVertices(), 0),
+      triangles: stage.scene.meshes.reduce((sum, mesh) => sum + mesh.getTotalIndices() / 3, 0) };
     if (!stage.world.environment?.fog ||
       stage.scene.fogColor.toHexString().toLowerCase() !== stage.world.environment.fog.toLowerCase()) {
       throw new Error("Butterbell must retain its authored environment through the game's course loader.");
@@ -101,14 +104,20 @@ for (const quality of ["balanced", "high"] as const) test(`Butterbell ${quality}
       stage.scene.render();
       return measureKartComposition(models[0].meshes, stage.camera, stage.engine.getRenderWidth(), stage.engine.getRenderHeight());
     };
-    const bench = { render, dispose: () => { stage.scene.dispose(); stage.engine.dispose(); },
+    let pose = .018, detailView = false;
+    const bench = { render: (u: number, detail = false) => {
+      pose = u; detailView = detail;
+      return render(u, detail);
+    }, dispose: () => { stage.engine.stopRenderLoop(); stage.scene.dispose(); stage.engine.dispose(); },
       count: () => ({ meshes: stage.scene.meshes.length, materials: stage.scene.materials.length,
         textures: stage.scene.textures.length, vertices: stage.scene.meshes.reduce((sum, mesh) => sum + mesh.getTotalVertices(), 0) }) };
     Object.assign(window, { __graphicsBench: bench });
     render(.018);
     await stage.scene.whenReadyAsync();
+    // Use the real engine frame lifecycle: a single scene.render can capture a stale postprocess frame.
+    stage.engine.runRenderLoop(() => render(pose, detailView));
     render(.018);
-    return { ...bench.count(), quality, courseVersion: course.version, renderer: stage.engine.getGlInfo(),
+    return { ...bench.count(), worldResources, quality, courseVersion: course.version, renderer: stage.engine.getGlInfo(),
       lighting: { fog: stage.scene.fogColor.asArray(), sun: stage.light.intensity, fill: stage.fill.intensity,
         direction: stage.light.direction.asArray(), exposure: stage.scene.imageProcessingConfiguration.exposure },
       composition: render(.018), note: "Fixed renderer-only compositions, not a driven race or a performance certification." };
@@ -117,14 +126,22 @@ for (const quality of ["balanced", "high"] as const) test(`Butterbell ${quality}
     const evidence = await Promise.race([capture, failure]);
     const compositions = [];
     for (const [name, u, detail] of [
-      ["start", .018, false], ["orchard", .18, false], ["reservoir", .40, false],
+      ["start", .018, false], ["barn-approach", .115, false], ["orchard", .18, false], ["reservoir", .40, false],
       ["starting-arch", .99, false], ["kart-detail", .018, true],
     ] as const) {
-      const composition = await page.evaluate(({ u, detail }) => {
+      const composition = await page.evaluate(({ u, detail, name, quality }) => {
         const bench = window.__graphicsBench;
         if (!bench) throw new Error("The graphics composition was not initialized.");
+        let caption = document.getElementById("graphics-caption");
+        if (!caption) {
+          caption = document.createElement("div");
+          caption.id = "graphics-caption";
+          caption.style.cssText = "position:fixed;bottom:8px;left:8px;padding:5px 8px;background:#17201ccc;color:#fff;font:12px monospace;pointer-events:none";
+          document.body.append(caption);
+        }
+        caption.textContent = `Butterbell / ${quality} / ${name} / u=${u}`;
         return bench.render(u, detail);
-      }, { u, detail });
+      }, { u, detail, name, quality });
       expect(Object.values(composition).every(Number.isFinite)).toBe(true);
       if (!detail) {
         expect(composition.width).toBeGreaterThan(.15);

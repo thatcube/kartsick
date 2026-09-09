@@ -7,6 +7,49 @@ single-kart Butterbell study remains available at `/?study` for controller compa
 The main entry runs the expanded local and direct-online development build.
 This is not the complete Kartsick release or the final production art/audio package.
 
+## Environment-art pass
+
+The lighting correction improved the picture but did not resolve the sparse,
+primitive-looking environment. This pass changes Butterbell's assets and
+composition rather than adjusting the light rig again.
+
+The single smooth tree crowns are replaced with seven interlocking branch-led
+volumes, folded leaf sprays, painted leaf/bark textures and smaller irregular
+apple pairs. The original tree locations and trunk collision cores remain
+unchanged. Barns now sit in rounded cobbled yards with planted herb beds,
+connected low hedges, striped window awnings, shutters and dairy details.
+Grounded mulch circles replace bare orchard bases. Small meadow leaves and
+buttercups replace the scattered triangular clippings; their shared, two-sided
+geometry uses ground-aligned shading rather than dark intersecting cards.
+The grass texture no longer contains the repeating sinusoidal tuft stripes,
+and broader harvest-field colors distinguish planted areas.
+
+A compact dairy hamlet adds a distant scale reference beyond the recovery
+boundary, with varied orientations, fitted foundations and a connecting lane.
+Its ground follows the same rolling-countryside equation as the horizon.
+The road, banks, gaps, item locations, hazards, recovery rules and collision
+cores are unchanged; the new close planting is low, non-solid vegetation.
+Ground overlays receive shadows but do not cast self-shadow stripes, and
+raised soil beds have separate heights from the paving beneath them.
+
+This art has an explicit cost: the course alone measures 302 meshes, 269,622
+vertices and 328,171 triangles. Its limits are now 320 meshes, 280,000 vertices,
+345,000 triangles and 65 materials, rather than hiding the additional foliage
+behind the old budgets. Ten shared local textures occupy 4.75 MiB before
+mipmaps, retaining the 5 MiB base-texture limit. In the fixed eight-kart scene,
+reported vertices rise from 608,847 to 738,994 (about 21%). Spatial batching,
+shared materials and disposal ownership remain in place. These are resource
+counts, not native-GPU 60 FPS certification.
+
+Default Balanced and High previews use the actual engine frame lifecycle and
+captioned, repeatable driving-camera positions, including the barn approach.
+The world-loading regressions exercise the real course adapter, preserve all
+solid cores, check planted/paved clearance and outward/nonzero normals, and
+retain individual readable mirror-label pivots. This is another playable art
+checkpoint, not final acceptance of the reference-quality target. Rider and
+kart animation, finer environmental art and the other five course-specific
+overhauls remain unfinished.
+
 ## Lighting and grounding correction
 
 The first graphics checkpoint was not visually accepted: the scenery still read

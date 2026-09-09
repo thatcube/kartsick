@@ -16,7 +16,8 @@ export function butterbellNoise(seed: number): number {
   return value - Math.floor(value);
 }
 
-export type ButterbellTexture = "asphalt" | "pasture" | "verge" | "siding" | "roof" | "hay";
+export const BUTTERBELL_TEXTURES = ["asphalt", "pasture", "verge", "siding", "roof", "hay", "yard"] as const;
+export type ButterbellTexture = typeof BUTTERBELL_TEXTURES[number];
 export const BUTTERBELL_TEXTURE_SIZE = 128;
 
 /** Original, tileable material studies. No image files, asset downloads or random state. */
@@ -32,8 +33,8 @@ export function butterbellTexturePixels(kind: ButterbellTexture, size = BUTTERBE
       const roller = Math.sin(u * Math.PI * 8) * .7;
       r = 104 + aggregate + roller; g = 105 + aggregate + roller; b = 99 + aggregate + roller;
     } else if (kind === "pasture") {
-      const tuft = Math.sin(u * Math.PI * 12 + Math.sin(v * Math.PI * 6)) * 4;
-      const fiber = n > .78 ? 10 : grain * 5;
+      const tuft = butterbellNoise(Math.floor(x / 7) + Math.floor(y / 5) * 83) * 7 - 3.5;
+      const fiber = n > .88 ? 13 : n < .09 ? -12 : grain * 3;
       r = 217 + tuft + fiber; g = 225 + tuft + fiber; b = 195 + tuft + fiber;
     } else if (kind === "verge") {
       const grit = grain * 12 + (n > .95 ? 15 : 0);
@@ -45,6 +46,12 @@ export function butterbellTexturePixels(kind: ButterbellTexture, size = BUTTERBE
     } else if (kind === "roof") {
       const seam = x % (size / 4) < 2 ? 18 : x % (size / 4) < 4 ? -17 : 0;
       r = 40 + seam + grain * 2; g = 118 + seam + grain * 2; b = 129 + seam + grain * 2;
+    } else if (kind === "yard") {
+      const row = Math.floor(y / 16), column = Math.floor((x + row % 2 * 16) / 32);
+      const joint = y % 16 < 2 || (x + row % 2 * 16) % 32 < 2;
+      const block = butterbellNoise(column % 4 + row * 7) * 18;
+      const shade = joint ? -40 : block + grain * 4;
+      r = 164 + shade; g = 156 + shade; b = 131 + shade;
     } else {
       const fiber = Math.sin((v * 64 + Math.sin(u * Math.PI * 2) * .3) * Math.PI * 2) * 11;
       r = 219 + fiber + grain * 9; g = 175 + fiber + grain * 10; b = 81 + fiber * .7 + grain * 8;
@@ -60,7 +67,7 @@ export function butterbellTexturePixels(kind: ButterbellTexture, size = BUTTERBE
 
 export function makeButterbellMaterials(art: Atelier) {
   const materials = {} as Record<ButterbellTexture, StandardMaterial>;
-  for (const kind of ["asphalt", "pasture", "verge", "siding", "roof", "hay"] as const) {
+  for (const kind of BUTTERBELL_TEXTURES) {
     const texture = RawTexture.CreateRGBATexture(butterbellTexturePixels(kind),
       BUTTERBELL_TEXTURE_SIZE, BUTTERBELL_TEXTURE_SIZE, art.scene, true, false, Texture.TRILINEAR_SAMPLINGMODE);
     texture.name = `butterbell original ${kind}`;
@@ -86,10 +93,13 @@ export function butterbellFieldColor(x: number, z: number): readonly [number, nu
   const warp = Math.sin(z * .039) * 9 + Math.sin(x * .027 + z * .016) * 5;
   const barley = Math.exp(-(((x + 80 + warp) / 38) ** 4 + ((z + 93) / 38) ** 4));
   const fallow = Math.exp(-(((x - 86 + warp) / 45) ** 4 + ((z - 151) / 25) ** 4));
+  const hayfield = Math.exp(-(((x - 38 + Math.sin(z * .07) * 2) / 28) ** 6 + ((z - 41) / 17) ** 6));
+  const hillside = Math.exp(-(((x + 130) / 34) ** 6 + ((z - 72 + x * .2) / 49) ** 6));
   const meadow = .5 + .5 * Math.sin(x * .024 + Math.sin(z * .032) * 1.3);
+  const harvest = Math.min(1, barley + hayfield * .8 + fallow * .6 + hillside * .52);
   return [
-    (.5 + meadow * .045) * (1 - barley * .9) + barley * .9 + fallow * .05,
-    (.68 + meadow * .035) * (1 - barley * .9) + barley * .72,
-    (.35 + meadow * .025) * (1 - barley * .85) + barley * .3,
+    (.5 + meadow * .045) * (1 - harvest * .9) + harvest * .9,
+    (.68 + meadow * .035) * (1 - harvest * .9) + harvest * .72,
+    (.35 + meadow * .025) * (1 - harvest * .85) + harvest * .3,
   ];
 }
