@@ -1,15 +1,11 @@
 import { Color3 } from "@babylonjs/core/Maths/math.color";
-import { VertexBuffer } from "@babylonjs/core/Buffers/buffer";
 import {
-  BARNS, ORCHARD, SHOULDER_WIDTH, bankWidth, isGap, isWater, projectRoad, sampleRoad, surfaceHeight,
+  BARNS, ORCHARD, SHOULDER_WIDTH, bankWidth, isWater, projectRoad, surfaceHeight,
 } from "@kartsick/content";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import type { ButterbellArt } from "./butterbell-art";
-import { BUTTERBELL as C, butterbellNoise as noise } from "./butterbell-materials";
 import type { ButterbellMaterials } from "./butterbell-materials";
 import { butterbellShrub, type makeButterbellFoliageMaterials } from "./butterbell-foliage";
-
-interface PlantBatch { positions: number[]; indices: number[]; colors: number[] }
 
 function patch(art: ButterbellArt, name: string, x: number, z: number, width: number, depth: number,
   material: StandardMaterial, color: string, exponent = .67, lift = .055): void {
@@ -44,73 +40,6 @@ function patch(art: ButterbellArt, name: string, x: number, z: number, width: nu
     indices.push(c, b, d);
   }
   if (indices.length) art.mesh(name, positions, indices, material, colors, uv);
-}
-
-function leaf(batch: PlantBatch, x: number, y: number, z: number, angle: number, height: number,
-  spread: number, color: Color3): void {
-  const { positions, indices, colors } = batch, base = positions.length / 3;
-  const dx = Math.cos(angle) * spread, dz = Math.sin(angle) * spread;
-  const acrossX = -Math.sin(angle) * spread * .24, acrossZ = Math.cos(angle) * spread * .24;
-  const points = [
-    x, y, z,
-    x + dx * .55 + acrossX, y + height * .58, z + dz * .55 + acrossZ,
-    x + dx, y + height, z + dz,
-    x + dx * .55 - acrossX, y + height * .58, z + dz * .55 - acrossZ,
-  ];
-  positions.push(...points);
-  for (let i = 0; i < 4; i++) {
-    const light = i % 4 === 0 ? .82 : i % 4 === 2 ? 1.1 : 1;
-    colors.push(color.r * light, color.g * light, color.b * light, 1);
-  }
-  indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
-}
-
-/** Low, drive-through vegetation, never a replacement for a collision boundary. */
-export function butterbellMeadows(art: ButterbellArt): StandardMaterial {
-  const material = new StandardMaterial("butterbell meadow leaves", art.art.scene);
-  material.specularColor = Color3.Black();
-  material.backFaceCulling = false;
-  const batches = new Map<string, PlantBatch>();
-  const baseColor = Color3.FromHexString("#7fa145"), tipColor = Color3.FromHexString("#b3c770");
-  const flower = Color3.FromHexString(C.cream), gold = Color3.FromHexString(C.straw);
-  const add = (x: number, z: number, seed: number, bloom: boolean) => {
-    const road = projectRoad(x, z);
-    if (road.separation < SHOULDER_WIDTH + 2.2 || isWater(x, z) || isGap(road.u) ||
-      BARNS.some(barn => Math.abs(x - barn.x) < 16 && Math.abs(z - barn.z) < 17)) return;
-    const support = surfaceHeight(x, z);
-    if ([[.26, 0], [-.26, 0], [0, .26], [0, -.26]].some(([dx, dz]) =>
-      Math.abs(surfaceHeight(x + dx, z + dz) - support) > .13)) return;
-    const key = `${Math.floor(x / 64)}:${Math.floor(z / 64)}`;
-    let batch = batches.get(key);
-    if (!batch) { batch = { positions: [], indices: [], colors: [] }; batches.set(key, batch); }
-    const y = support + .018, height = .13 + noise(seed + 92) * .17;
-    const color = Color3.Lerp(baseColor, tipColor, noise(seed + 75));
-    for (let blade = 0; blade < 3; blade++) {
-      leaf(batch, x, y, z, seed + blade * 2.4, height * (.8 + noise(seed + blade) * .4), .18, color);
-    }
-    if (bloom) for (let petal = 0; petal < 5; petal++) {
-      leaf(batch, x, y + height * .8, z, petal * Math.PI * 2 / 5, .07, .095, seed % 3 ? flower : gold);
-    }
-  };
-  for (let i = 0; i < 520; i++) {
-    const p = sampleRoad((i + .5) / 520), side = i % 2 ? -1 : 1;
-    // Uneven drifts reveal mown grass between them rather than a uniform ribbon.
-    if (isGap(p.u) || noise(Math.floor(i / 8) + 811) < .30) continue;
-    for (let plant = 0; plant < 7; plant++) {
-      const seed = i * 19 + plant;
-      const across = SHOULDER_WIDTH + 2.6 + noise(seed + 449) * 3.6;
-      const forward = (noise(seed + 891) - .5) * 3;
-      add(p.x + p.dz * side * across + p.dx * forward,
-        p.z - p.dx * side * across + p.dz * forward, seed, plant > 3 && i % 11 < 4);
-    }
-  }
-  for (const [key, batch] of batches) {
-    const mesh = art.mesh(`butterbell meadow drift ${key}`,
-      batch.positions, batch.indices, material, batch.colors);
-    // Ground-aligned foliage normals keep tiny intersecting leaves from becoming black diamonds.
-    mesh.setVerticesData(VertexBuffer.NormalKind, batch.positions.map((_, index) => index % 3 === 1 ? 1 : 0));
-  }
-  return material;
 }
 
 export function butterbellFarmGround(art: ButterbellArt, materials: ButterbellMaterials): void {

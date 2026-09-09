@@ -8,13 +8,17 @@ import { makeEscalunaWorld } from "./worlds/escaluna";
 import { makeLastlightWorld } from "./worlds/lastlight";
 import { makeTiltglassWorld } from "./worlds/tiltglass";
 import { makeCopperwhistleWorld } from "./worlds/copperwhistle";
+import { makeCourseGroundcover } from "./course-groundcover";
+
+const builders = {
+  butterbell: makeWorld, afterglow: makeAfterglowWorld, escaluna: makeEscalunaWorld,
+  lastlight: makeLastlightWorld, tiltglass: makeTiltglassWorld, copperwhistle: makeCopperwhistleWorld,
+};
 
 export function makeCourseWorld(art: Atelier, id: CourseId): CourseWorld {
-  if (id === "butterbell") return makeWorld(art);
-  if (id === "afterglow") return makeAfterglowWorld(art, getCourse(id));
-  if (id === "escaluna") return makeEscalunaWorld(art, getCourse(id));
-  if (id === "lastlight") return makeLastlightWorld(art, getCourse(id));
-  if (id === "tiltglass") return makeTiltglassWorld(art, getCourse(id));
-  if (id === "copperwhistle") return makeCopperwhistleWorld(art, getCourse(id));
-  throw new RangeError(`The ${id} world has not been connected yet.`);
+  const build = builders[id];
+  if (!Object.hasOwn(builders, id)) throw new RangeError(`The ${id} world has not been connected yet.`);
+  const course = getCourse(id), world = build(art, course);
+  if (id !== "butterbell") makeCourseGroundcover(art, course);
+  return world;
 }

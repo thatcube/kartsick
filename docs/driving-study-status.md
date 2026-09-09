@@ -7,6 +7,55 @@ single-kart Butterbell study remains available at `/?study` for controller compa
 The main entry runs the expanded local and direct-online development build.
 This is not the complete Kartsick release or the final production art/audio package.
 
+## All-course small foliage
+
+Butterbell now has 5,800 small plants: irregular meadow drifts, orchard clover,
+daisies, buttercups, seed heads and reeds around the reservoir. This replaces
+the previous grass-and-flower scatter rather than layering a second system
+over it. Mown racing margins and farmyard paving remain clear.
+
+All six courses share the folded-leaf geometry and deterministic placement
+system, with different planting for each setting. Terminal and galleria
+greenery uses shallow edge troughs and existing planters; the arcade has
+turquoise felt-like leaves and pink flowers. Copperwhistle has fern, clover
+and seed-head pockets in bark-shaped beds. Lastlight mixes small alpine
+rosettes and grasses with lower-altitude flowers, including stone-lip patches
+that remain visible from its elevated roadway.
+
+| Course | Plants | Spatial batches | Groundcover vertices |
+|---|---:|---:|---:|
+| Butterbell | 5,800 | 36 | 128,224 |
+| Afterglow | 1,626 | 24 | 48,291 |
+| Escaluna | 2,259 | 31 | 59,536 |
+| Tiltglass | 1,370 | 23 | 46,137 |
+| Copperwhistle | 1,416 | 18 | 86,911 |
+| Lastlight | 4,800 | 113 | 93,086 |
+
+Each course adds one opaque material and no textures. Leaves and their edge
+beds share 64-metre spatial batches, with soft upward leaf lighting and
+separate shaped normals on the soil and edges. These are low, non-solid
+decorations outside the supported driving corridors, not new drivable ledges.
+Placement excludes every main/shortcut corridor, swept hazard area, flight
+approach/landing, scenery core and unsuitable water/slope support. Course
+physics, collision shapes, route versions and recovery behavior are unchanged.
+
+The extra Butterbell planting increases the fixed eight-kart scene from
+738,994 to 842,550 reported vertices, approximately 14%. Its course-only
+limits are now 340 meshes, 400,000 vertices and 420,000 triangles; the existing
+65-material and 5-MiB base-texture limits are unchanged. The addition is bounded
+and spatially culled, not a claim that more geometry is free.
+
+Captioned driving-camera views were inspected on the shared browser's Apple
+GPU for all six courses, with both Balanced and High views of Butterbell.
+The actual `RaceScene` also completed 18 normal/mirrored/normal course loads
+in one native engine with correct foliage transforms and no accumulating
+vertices, textures or materials. Fresh standalone Playwright Chromium launches
+failed before opening the test page on the development host; those attempts
+are not passing browser tests. The reusable graphics bench has explicit
+readiness/lifetime bounds and disposes its scene without changing saved game
+settings. This remains a foliage pass, not the broader art rebuild still
+needed by the other five worlds or native-GPU 60 FPS acceptance.
+
 ## Environment-art pass
 
 The lighting correction improved the picture but did not resolve the sparse,
@@ -32,8 +81,8 @@ cores are unchanged; the new close planting is low, non-solid vegetation.
 Ground overlays receive shadows but do not cast self-shadow stripes, and
 raised soil beds have separate heights from the paving beneath them.
 
-This art has an explicit cost: the course alone measures 302 meshes, 269,622
-vertices and 328,171 triangles. Its limits are now 320 meshes, 280,000 vertices,
+At this earlier checkpoint the course alone measured 302 meshes, 269,622
+vertices and 328,171 triangles. Its limits were 320 meshes, 280,000 vertices,
 345,000 triangles and 65 materials, rather than hiding the additional foliage
 behind the old budgets. Ten shared local textures occupy 4.75 MiB before
 mipmaps, retaining the 5 MiB base-texture limit. In the fixed eight-kart scene,

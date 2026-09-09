@@ -234,7 +234,7 @@ describe("Butterbell authored countryside", () => {
         expect(normals[i + 1], name).toBeGreaterThan(0);
       }
     }
-    for (const name of ["butterbell yard", "butterbell verge", "butterbell meadow leaves"]) {
+    for (const name of ["butterbell yard", "butterbell verge", "butterbell groundcover leaves"]) {
       const material = scene.getMaterialByName(name);
       expect(material, name).not.toBeNull();
       expect(world.casters.some(mesh => mesh.material === material), name).toBe(false);
@@ -242,13 +242,13 @@ describe("Butterbell authored countryside", () => {
   });
 
   it("plants low meadow drifts outside the mown racing verge, not triangular confetti", () => {
-    const meadows = rawMeshes.filter(([name]) => name.startsWith("butterbell meadow drift"));
+    const meadows = rawMeshes.filter(([name]) => name.startsWith("butterbell groundcover leaves"));
     expect(meadows.length).toBeGreaterThan(8);
     expect(rawMeshes.some(([name]) => name.startsWith("low pasture clover"))).toBe(false);
     for (const [name, positions] of meadows) for (let i = 0; i < positions.length; i += 3) {
       const x = positions[i], z = positions[i + 2], p = projectRoad(x, z);
       expect(p.separation, name).toBeGreaterThan(SHOULDER_WIDTH + 1.8);
-      expect(positions[i + 1] - surfaceHeight(x, z), name).toBeLessThan(.8);
+      expect(positions[i + 1] - surfaceHeight(x, z), name).toBeLessThan(1);
     }
   });
 
@@ -305,9 +305,9 @@ describe("Butterbell authored countryside", () => {
     expect(localTextures.filter(t => t.getSize().width === 256)).toHaveLength(1);
     const bytes = localTextures.reduce((sum, t) => sum + t.getSize().width * t.getSize().height * 4, 0);
     expect(bytes).toBeLessThanOrEqual(5 * 1024 * 1024);
-    expect(scene.meshes.length).toBeLessThan(320);
-    expect(scene.meshes.reduce((sum, m) => sum + m.getTotalVertices(), 0)).toBeLessThan(280000);
-    expect(scene.meshes.reduce((sum, m) => sum + m.getTotalIndices() / 3, 0)).toBeLessThan(345000);
+    expect(scene.meshes.length).toBeLessThan(340);
+    expect(scene.meshes.reduce((sum, m) => sum + m.getTotalVertices(), 0)).toBeLessThan(400000);
+    expect(scene.meshes.reduce((sum, m) => sum + m.getTotalIndices() / 3, 0)).toBeLessThan(420000);
     expect(scene.materials.length).toBeLessThan(65);
     const textured = scene.meshes.filter(m => m.material instanceof StandardMaterial && m.material.diffuseTexture);
     expect(textured.length).toBeGreaterThan(35);

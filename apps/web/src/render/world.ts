@@ -3,7 +3,7 @@ import { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import {
   BARNS, GAP_END, GAP_START, HAY_BALES, ORCHARD, ROAD, ROAD_WIDTH, SHOULDER_WIDTH, WATER_LEVEL,
-  bankHeight, bankWidth, hasRail, isGap, isWater, projectRoad, sampleRoad, surfaceHeight, terrainHeight,
+  bankHeight, bankWidth, getCourse, hasRail, isGap, isWater, projectRoad, sampleRoad, surfaceHeight, terrainHeight,
 } from "@kartsick/content";
 import type { RoadPoint } from "@kartsick/content";
 import { Atelier } from "./geometry";
@@ -15,7 +15,8 @@ import { BUTTERBELL as C, butterbellFieldColor, butterbellNoise as noise, makeBu
 import type { ButterbellMaterials } from "./butterbell-materials";
 import { butterbellBarn, butterbellHay, butterbellWindmill } from "./butterbell-farm";
 import { butterbellExposedGround } from "./butterbell-ground";
-import { butterbellFarmGround, butterbellMeadows, butterbellPlantings } from "./butterbell-landscape";
+import { butterbellFarmGround, butterbellPlantings } from "./butterbell-landscape";
+import { makeCourseGroundcover } from "./course-groundcover";
 import { butterbellCountrysideHeight, butterbellDairyHamlet } from "./butterbell-backdrop";
 import { butterbellOrchardTree, makeButterbellFoliageMaterials } from "./butterbell-foliage";
 
@@ -311,7 +312,7 @@ export function makeWorld(art: Atelier): StudyWorld {
   const roadCasters = raceway(art, scenery, materials);
   fieldDetails(scenery, materials);
   butterbellFarmGround(scenery, materials);
-  const meadowMaterial = butterbellMeadows(scenery);
+  makeCourseGroundcover(art, getCourse("butterbell"));
   butterbellPlantings(scenery, foliage);
   for (const item of ORCHARD) butterbellOrchardTree(scenery, foliage, item.x, item.z, item.scale, item.seed);
   for (const farm of BARNS) butterbellBarn(scenery, materials, farm.x, farm.z);
@@ -340,7 +341,7 @@ export function makeWorld(art: Atelier): StudyWorld {
   });
   updateButterbellHarvest(rollers, 0);
   const staticCasters = scenery.finish().filter(mesh => mesh.material !== materials.yard &&
-    mesh.material !== materials.verge && mesh.material !== meadowMaterial);
+    mesh.material !== materials.verge);
   const meshes = (root: TransformNode) => root.getChildMeshes().filter((mesh): mesh is Mesh => mesh instanceof Mesh);
   art.scene.metadata = { ...art.scene.metadata, butterbellFurniture: scenery.furniture };
   return {
