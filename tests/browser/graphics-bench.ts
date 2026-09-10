@@ -86,6 +86,7 @@ export async function createGraphicsBench(id: CourseId, quality: "balanced" | "h
     const evidence = { ...count(), worldResources, quality, courseVersion: course.version, renderer: active.engine.getGlInfo(),
       groundcover: active.scene.metadata?.groundcover,
       woodlandTrees: id === "butterbell" ? active.scene.metadata?.butterbellWoodland?.length ?? 0 : 0,
+      fieldHedgeBatches: active.scene.meshes.filter(mesh => mesh.parent?.metadata?.backgroundFields).length,
       lighting: { fog: active.scene.fogColor.asArray(), sun: active.light.intensity, fill: active.fill.intensity,
         direction: active.light.direction.asArray(), exposure: active.scene.imageProcessingConfiguration.exposure },
       note: "Fixed renderer-only compositions, not a driven race or a performance certification." };

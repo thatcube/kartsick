@@ -4,12 +4,43 @@ import type { ButterbellArt } from "./butterbell-art";
 import { BUTTERBELL as C, butterbellNoise as noise } from "./butterbell-materials";
 import type { Triple } from "./geometry";
 
-export function butterbellCountrysideHeight(x: number, z: number): number {
+export const BUTTERBELL_HORIZON_STEPS = 240;
+export const BUTTERBELL_HORIZON_ROWS = 28;
+const HORIZON_SPACING = 23;
+
+function countrysideElevation(x: number, z: number): number {
   const outward = Math.max(0, Math.abs(x) - 240, Math.abs(z) - 250);
   const envelope = Math.sin(Math.min(1, outward / 230) * Math.PI / 2) ** 2;
   const rolling = 30 + 19 * Math.sin(x * .012 + Math.sin(z * .009))
     + 16 * Math.cos(z * .015 - Math.sin(x * .007)) + 9 * Math.sin((x + z) * .026);
   return terrainHeight(x, z) + envelope * rolling;
+}
+
+export function butterbellCountrysideVertex(row: number, column: number): Triple {
+  const angle = column / BUTTERBELL_HORIZON_STEPS * Math.PI * 2;
+  const edge = 1 / Math.max(Math.abs(Math.cos(angle)), Math.abs(Math.sin(angle)));
+  const outward = row * HORIZON_SPACING;
+  const x = Math.cos(angle) * edge * (240 + outward), z = Math.sin(angle) * edge * (250 + outward);
+  return [x, countrysideElevation(x, z), z];
+}
+
+/** Ground props on the actual coarse hillside triangles, not an unsampled smooth hill. */
+export function butterbellCountrysideHeight(x: number, z: number): number {
+  const outward = Math.max(Math.abs(x) - 240, Math.abs(z) - 250);
+  if (outward <= 0 || outward >= BUTTERBELL_HORIZON_ROWS * HORIZON_SPACING) return countrysideElevation(x, z);
+  const row = Math.floor(outward / HORIZON_SPACING);
+  const angle = (Math.atan2(z / (250 + outward), x / (240 + outward)) + Math.PI * 2) % (Math.PI * 2);
+  const column = Math.floor(angle / (Math.PI * 2) * BUTTERBELL_HORIZON_STEPS);
+  const a = butterbellCountrysideVertex(row, column), b = butterbellCountrysideVertex(row + 1, column);
+  const c = butterbellCountrysideVertex(row, column + 1), d = butterbellCountrysideVertex(row + 1, column + 1);
+  const height = (p: Triple, q: Triple, r: Triple) => {
+    const determinant = (q[2] - r[2]) * (p[0] - r[0]) + (r[0] - q[0]) * (p[2] - r[2]);
+    const u = ((q[2] - r[2]) * (x - r[0]) + (r[0] - q[0]) * (z - r[2])) / determinant;
+    const v = ((r[2] - p[2]) * (x - r[0]) + (p[0] - r[0]) * (z - r[2])) / determinant;
+    return { inside: u >= -1e-7 && v >= -1e-7 && u + v <= 1 + 1e-7, y: u * p[1] + v * q[1] + (1 - u - v) * r[1] };
+  };
+  const first = height(a, b, c);
+  return first.inside ? first.y : height(c, b, d).y;
 }
 
 /** The valley's distant dairy hamlet is entirely beyond the recovery boundary. */

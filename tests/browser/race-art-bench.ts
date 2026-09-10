@@ -74,6 +74,8 @@ export async function createRaceArtBench() {
           textures: active.scene.textures.length, vertices: active.scene.meshes.reduce((sum, mesh) => sum + mesh.getTotalVertices(), 0),
           triangles: active.scene.meshes.reduce((sum, mesh) => sum + mesh.getTotalIndices() / 3, 0),
           woodlandDeterminants: woodland.map(mesh => mesh.computeWorldMatrix(true).determinant()),
+          fieldHedgeDeterminants: active.scene.meshes.filter(mesh => mesh.parent?.metadata?.backgroundFields)
+            .map(mesh => mesh.computeWorldMatrix(true).determinant()),
           kartVisibilities: [...new Set(active.scene.transformNodes.filter(node => node.metadata?.kind === "kart")
             .flatMap(node => node.getChildMeshes().map(mesh => mesh.visibility)))],
           renderer: active.engine.getGlInfo(), pickups: race.pickups.length,

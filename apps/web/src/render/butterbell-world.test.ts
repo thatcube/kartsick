@@ -18,7 +18,14 @@ import type { StudyWorld } from "./world";
 import { ButterbellArt, butterbellDecorationClearance } from "./butterbell-art";
 import { butterbellFieldColor, butterbellTexturePixels, BUTTERBELL_TEXTURE_SIZE, BUTTERBELL_TEXTURES } from "./butterbell-materials";
 import { butterbellWoodlandLayout } from "./butterbell-foliage";
-import { butterbellCountrysideHeight, butterbellDairyHamlet } from "./butterbell-backdrop";
+import {
+  butterbellCountrysideHeight, butterbellCountrysideVertex, butterbellDairyHamlet,
+  BUTTERBELL_HORIZON_ROWS, BUTTERBELL_HORIZON_STEPS,
+} from "./butterbell-backdrop";
+import {
+  BUTTERBELL_COUNTRYSIDE_EXTENT, BUTTERBELL_COUNTRYSIDE_TEXTURE_SIZE,
+  butterbellCountrysideColor, butterbellCountrysidePixels, BUTTERBELL_FIELDS,
+} from "./butterbell-fields";
 
 describe("Butterbell authored countryside", () => {
   const engine = new NullEngine(), scene = new Scene(engine);
@@ -98,6 +105,65 @@ describe("Butterbell authored countryside", () => {
     }
     expect(heights.size).toBeGreaterThan(65);
     expect(world.environment!.sunIntensity + world.environment!.fillIntensity).toBeLessThanOrEqual(1);
+  });
+
+  it("maps the cultivated painting once across the unchanged hills, including mirror mode", () => {
+    const hills = scene.getMeshByName("butterbell rolling countryside")!;
+    const positions = hills.getVerticesData(VertexBuffer.PositionKind)!;
+    const uvs = hills.getVerticesData(VertexBuffer.UVKind)!;
+    for (let i = 0; i < positions.length / 3; i++) {
+      expect(positions[i * 3 + 1]).toBeCloseTo(butterbellCountrysideHeight(positions[i * 3], positions[i * 3 + 2]), 4);
+      expect(uvs[i * 2]).toBeCloseTo(.5 + positions[i * 3] / (BUTTERBELL_COUNTRYSIDE_EXTENT * 2), 6);
+      expect(uvs[i * 2 + 1]).toBeCloseTo(.5 + positions[i * 3 + 2] / (BUTTERBELL_COUNTRYSIDE_EXTENT * 2), 6);
+      expect(uvs[i * 2]).toBeGreaterThan(0);
+      expect(uvs[i * 2]).toBeLessThan(1);
+      expect(uvs[i * 2 + 1]).toBeGreaterThan(0);
+      expect(uvs[i * 2 + 1]).toBeLessThan(1);
+    }
+    const material = hills.material as StandardMaterial;
+    expect(material.name).toBe("butterbell cultivated countryside");
+    expect(material.diffuseTexture?.getSize()).toEqual({
+      width: BUTTERBELL_COUNTRYSIDE_TEXTURE_SIZE, height: BUTTERBELL_COUNTRYSIDE_TEXTURE_SIZE,
+    });
+    expect(material.diffuseTexture?.wrapU).toBe(Texture.CLAMP_ADDRESSMODE);
+    expect(material.diffuseTexture?.wrapV).toBe(Texture.CLAMP_ADDRESSMODE);
+    hills.scaling.x = -1;
+    expect(hills.getVerticesData(VertexBuffer.UVKind)).toEqual(uvs);
+    expect(hills.computeWorldMatrix(true).determinant()).toBe(-1);
+    hills.scaling.x = 1;
+    hills.computeWorldMatrix(true);
+  });
+
+  it("grounds background props on the same two triangles rendered in every hillside cell", () => {
+    for (let row = 0; row < BUTTERBELL_HORIZON_ROWS; row += 2) {
+      for (let column = 0; column < BUTTERBELL_HORIZON_STEPS; column += 3) {
+        const a = butterbellCountrysideVertex(row, column), b = butterbellCountrysideVertex(row + 1, column);
+        const c = butterbellCountrysideVertex(row, column + 1), d = butterbellCountrysideVertex(row + 1, column + 1);
+        for (const [p, q, r] of [[a, b, c], [c, b, d]]) {
+          const x = p[0] * .2 + q[0] * .3 + r[0] * .5, z = p[2] * .2 + q[2] * .3 + r[2] * .5;
+          expect(butterbellCountrysideHeight(x, z)).toBeCloseTo(p[1] * .2 + q[1] * .3 + r[1] * .5, 6);
+        }
+      }
+    }
+  });
+
+  it("keeps solid field hedges outside recovery bounds and outside near-track shadow rendering", () => {
+    const bounds = getCourse().bounds;
+    const hedges = rawMeshes.filter(([name]) => name === "butterbell cultivated field hedgerow");
+    expect(hedges).toHaveLength(8);
+    for (const [, positions, indices] of hedges) {
+      const normals: number[] = [];
+      VertexData.ComputeNormals(positions, indices, normals);
+      for (let i = 0; i < positions.length; i += 3) {
+        const x = positions[i], z = positions[i + 2];
+        expect(x < bounds.minX - 15 || x > bounds.maxX + 15 || z < bounds.minZ - 15 || z > bounds.maxZ + 15).toBe(true);
+        expect(positions[i + 1] - butterbellCountrysideHeight(x, z)).toBeLessThan(1.65);
+        if (i / 3 % 6 === 2 || i / 3 % 6 === 3) expect(normals[i + 1]).toBeGreaterThan(0);
+      }
+    }
+    const batches = scene.meshes.filter(mesh => mesh.parent?.metadata?.backgroundFields);
+    expect(batches.length).toBeLessThanOrEqual(4);
+    expect(batches.every(mesh => !world.casters.some(caster => caster === mesh))).toBe(true);
   });
 
   it("does not widen, elevate or bridge the physical road and samples the exact bank equation", () => {
@@ -377,11 +443,11 @@ describe("Butterbell authored countryside", () => {
 
   it("uses bounded shared local textures and spatially batched geometry", () => {
     const localTextures = scene.textures.filter(t => t.name.startsWith("butterbell"));
-    expect(localTextures).toHaveLength(BUTTERBELL_TEXTURES.length + 3);
+    expect(localTextures).toHaveLength(BUTTERBELL_TEXTURES.length + 4);
     expect(localTextures.filter(t => t.getSize().width === BUTTERBELL_TEXTURE_SIZE)).toHaveLength(BUTTERBELL_TEXTURES.length + 1);
     expect(localTextures.filter(t => t.getSize().width === 256)).toHaveLength(1);
     const bytes = localTextures.reduce((sum, t) => sum + t.getSize().width * t.getSize().height * 4, 0);
-    expect(bytes).toBeLessThanOrEqual(5 * 1024 * 1024);
+    expect(bytes).toBeLessThanOrEqual(6 * 1024 * 1024);
     expect(scene.meshes.length).toBeLessThan(340);
     expect(scene.meshes.reduce((sum, m) => sum + m.getTotalVertices(), 0)).toBeLessThan(400000);
     expect(scene.meshes.reduce((sum, m) => sum + m.getTotalIndices() / 3, 0)).toBeLessThan(440000);
@@ -420,6 +486,25 @@ describe("Butterbell authored countryside", () => {
 });
 
 describe("Butterbell original material studies", () => {
+  it("paints distinct harvest fields without changing the playable pasture boundary", () => {
+    const pixels = butterbellCountrysidePixels();
+    expect(pixels).toEqual(butterbellCountrysidePixels());
+    expect(pixels).toHaveLength(BUTTERBELL_COUNTRYSIDE_TEXTURE_SIZE ** 2 * 4);
+    for (let i = 3; i < pixels.length; i += 4) expect(pixels[i]).toBe(255);
+    for (const [x, z] of [[240, 15], [-240, 180], [40, 250], [-180, -250], [0, 0]]) {
+      const pasture = butterbellFieldColor(x, z);
+      expect(butterbellCountrysideColor(x, z)).toEqual([pasture[0] * 217, pasture[1] * 225, pasture[2] * 195]);
+    }
+    expect(new Set(BUTTERBELL_FIELDS.map(field => field.crop)).size).toBe(3);
+    const barley = butterbellCountrysideColor(-127, 343), clover = butterbellCountrysideColor(-94, 444);
+    expect(barley[0] - clover[0]).toBeGreaterThan(50);
+    expect(barley[2] - clover[2]).toBeGreaterThan(20);
+    for (let x = -900; x <= 900; x += 20) for (let z = -900; z <= 900; z += 20) {
+      const color = butterbellCountrysideColor(x, z);
+      expect(color.every(value => Number.isFinite(value) && value >= 0 && value <= 255)).toBe(true);
+    }
+  });
+
   it("makes deterministic opaque aggregate, plant, grit, wood, roof and hay pixels", () => {
     for (const kind of BUTTERBELL_TEXTURES) {
       const first = butterbellTexturePixels(kind);

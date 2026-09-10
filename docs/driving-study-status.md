@@ -7,6 +7,43 @@ single-kart Butterbell study remains available at `/?study` for controller compa
 The main entry runs the expanded local and direct-online development build.
 This is not the complete Kartsick release or the final production art/audio package.
 
+## Cultivated valley and hillside grounding
+
+Butterbell's background slopes now carry 16 individually placed barley,
+clover and cut-hay fields. Curved crop rows follow the field margins, with
+open meadow around the village and cooler unplanted outer ridges. This is a
+single original 512-square world-space painting, not repeated field tiles.
+The playable edge blends back to its existing pasture colors.
+
+Eight low, shaped hedgerows give the visible field edges physical silhouettes,
+using the existing leaf material in four spatial batches. The initial
+painted dark borders were rejected in native driving-camera views because
+they read as blurred stains. The retained version uses actual hedges instead
+of those painted outlines. All added raised geometry is beyond the recovery
+boundary and excluded from near-track shadow casting.
+
+Background placement now samples the actual two triangles in each hillside
+cell. Previously the village, its lane and woodland sampled the smooth source
+height formula between those vertices, which could leave gaps or bury scenery
+on the coarser rendered slopes. The hillside vertices themselves, playable
+terrain, road, collisions, hazards and course version are unchanged.
+
+This adds 1,392 vertices and 2,304 triangles. The fixed eight-kart scene reports
+857,764 vertices, 758 meshes, 366 materials and 14 textures; the stage before
+karts reports 397,019 vertices and 434,303 triangles. The field painting adds
+one material and 1 MiB of base texture data. Butterbell's local base-texture
+ceiling rises explicitly from 5 to 6 MiB (actual 5.75 MiB); the 340-mesh,
+400,000-vertex, 440,000-triangle and 65-material course ceilings are unchanged.
+These base-texture numbers exclude mipmaps and shared stage resources.
+
+Native Balanced and High barn/return views were inspected. The real race
+renderer also retained correct four-batch hedge mirroring in one/four-view
+configurations and released/rebuilt the landscape through two Afterglow
+round trips. Warmed resource counts matched exactly, with the previously
+observed one-material decrease after the first unload and no growth.
+These remain fixed renderer compositions, not human driving or 60 FPS
+certification. Other courses' art and the broader visual acceptance remain open.
+
 ## Character, item and valley modeling
 
 The eight approved riders now use shaped jaws and muzzles, tailored clothing,

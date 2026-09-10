@@ -161,6 +161,8 @@ test.describe("cast and item art", () => {
         expect(capture.evidence.kartVisibilities).toEqual([1]);
         expect(capture.evidence.woodlandDeterminants).toHaveLength(8);
         for (const determinant of capture.evidence.woodlandDeterminants) expect(determinant).toBeCloseTo(mirror ? -1 : 1);
+        expect(capture.evidence.fieldHedgeDeterminants).toHaveLength(4);
+        for (const determinant of capture.evidence.fieldHedgeDeterminants) expect(determinant).toBeCloseTo(mirror ? -1 : 1);
         const { meshes, materials, textures, vertices } = capture.evidence;
         const resources = [meshes, materials, textures, vertices];
         if (index === 0) baseline = resources;

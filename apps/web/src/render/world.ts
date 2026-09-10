@@ -17,7 +17,10 @@ import { butterbellBarn, butterbellHay, butterbellWindmill } from "./butterbell-
 import { butterbellExposedGround } from "./butterbell-ground";
 import { butterbellFarmGround, butterbellPlantings } from "./butterbell-landscape";
 import { makeCourseGroundcover } from "./course-groundcover";
-import { butterbellCountrysideHeight, butterbellDairyHamlet } from "./butterbell-backdrop";
+import {
+  butterbellCountrysideVertex, butterbellDairyHamlet, BUTTERBELL_HORIZON_ROWS, BUTTERBELL_HORIZON_STEPS,
+} from "./butterbell-backdrop";
+import { BUTTERBELL_COUNTRYSIDE_EXTENT, makeButterbellCountrysideMaterial, butterbellFieldHedges } from "./butterbell-fields";
 import { butterbellOrchardTree, butterbellWoodland, makeButterbellFoliageMaterials } from "./butterbell-foliage";
 
 export interface StudyWorld extends CourseWorld {}
@@ -173,25 +176,19 @@ function fieldDetails(art: ButterbellArt, materials: ButterbellMaterials): void 
   }
 }
 
-function horizon(art: Atelier, materials: ButterbellMaterials): void {
-  const positions: number[] = [], indices: number[] = [], colors: number[] = [], uv: number[] = [];
-  const around = 240, rows = 28;
+function horizon(art: Atelier): void {
+  const positions: number[] = [], indices: number[] = [], uv: number[] = [];
+  const around = BUTTERBELL_HORIZON_STEPS, rows = BUTTERBELL_HORIZON_ROWS;
   for (let row = 0; row <= rows; row++) for (let i = 0; i <= around; i++) {
-    const angle = i / around * Math.PI * 2;
-    const edge = 1 / Math.max(Math.abs(Math.cos(angle)), Math.abs(Math.sin(angle)));
-    const outward = row * 23;
-    const x = Math.cos(angle) * edge * (240 + outward), z = Math.sin(angle) * edge * (250 + outward);
-    positions.push(x, butterbellCountrysideHeight(x, z), z);
-    const field = .5 + .5 * Math.sin(x * .025 + Math.sin(z * .018) * 2.4);
-    const hay = Math.max(0, Math.sin(x * .012 + z * .014)) ** 4;
-    colors.push(.5 + field * .1 + hay * .18, .66 + field * .09 + hay * .05, .33 + field * .05, 1);
-    uv.push(x / 9, z / 9);
+    const [x, y, z] = butterbellCountrysideVertex(row, i);
+    positions.push(x, y, z);
+    uv.push(.5 + x / (BUTTERBELL_COUNTRYSIDE_EXTENT * 2), .5 + z / (BUTTERBELL_COUNTRYSIDE_EXTENT * 2));
     if (row < rows && i < around) {
       const a = row * (around + 1) + i, next = a + around + 1;
       indices.push(a, next, a + 1, a + 1, next, next + 1);
     }
   }
-  surfaceMesh(art, "butterbell rolling countryside", positions, indices, materials.pasture, colors, uv);
+  surfaceMesh(art, "butterbell rolling countryside", positions, indices, makeButterbellCountrysideMaterial(art), undefined, uv);
 }
 
 function pond(art: Atelier, scenery: ButterbellArt): void {
@@ -319,9 +316,10 @@ export function makeWorld(art: Atelier): StudyWorld {
   for (const bale of HAY_BALES) butterbellHay(scenery, materials, bale.x, bale.z);
   const rotor = butterbellWindmill(scenery);
   pond(art, scenery);
-  horizon(art, materials);
+  horizon(art);
   butterbellDairyHamlet(scenery);
   butterbellWoodland(scenery, foliage);
+  butterbellFieldHedges(scenery, foliage.crown);
   raceFestival(scenery);
   const rollers = HARVEST_POINTS.map((_, index) => {
     const root = new TransformNode(`hay-roller-${index}`, art.scene);
@@ -342,7 +340,8 @@ export function makeWorld(art: Atelier): StudyWorld {
   });
   updateButterbellHarvest(rollers, 0);
   const staticCasters = scenery.finish().filter(mesh => mesh.material !== materials.yard &&
-    mesh.material !== materials.verge && !mesh.parent?.metadata?.backgroundWoodland);
+    mesh.material !== materials.verge && !mesh.parent?.metadata?.backgroundWoodland &&
+    !mesh.parent?.metadata?.backgroundFields);
   const meshes = (root: TransformNode) => root.getChildMeshes().filter((mesh): mesh is Mesh => mesh instanceof Mesh);
   art.scene.metadata = { ...art.scene.metadata, butterbellFurniture: scenery.furniture };
   return {
